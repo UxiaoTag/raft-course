@@ -28,6 +28,20 @@ import (
 	"course/labrpc"
 )
 
+const (
+	electionTimeoutMin time.Duration = 250 * time.Millisecond
+	electionTimeoutMax time.Duration = 400 * time.Millisecond
+)
+
+type Role string
+
+// 定义角色状态为常量
+const (
+	Follower  Role = "Follower"
+	Candidate Role = "Candidate"
+	Leader    Role = "Leader"
+)
+
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
 // tester) on the same server, via the applyCh passed to Make(). set
@@ -60,17 +74,80 @@ type Raft struct {
 	// Your data here (PartA, PartB, PartC).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+	//PartA
+	role        Role
+	currentTerm int
+	vortedFor   int //在currentTerm任期是否投过票 -1 means none
 
+	electionStart   time.Time     //选举起始点
+	electionTimeout time.Duration //选举时间间隔
+}
+
+func (rf *Raft) becomeFollowerLocked(term int) {
+	if term < rf.currentTerm {
+		//在此处，你执行了becomeFollower意味着你需要变成follower，你不应该被比你低的任期的所更改状态
+		LOG(rf.me, rf.currentTerm, DError, "收到了更低的任期T%d", term)
+		return
+	}
+
+	LOG(rf.me, rf.currentTerm, DLog, "%s->Follower,term T%d->T%d", rf.role, rf.currentTerm, term)
+	// rf.mu.Lock()
+	rf.role = Follower
+	// important! Could only reset the `votedFor` when term increased
+	if term > rf.currentTerm {
+		rf.vortedFor = -1
+	}
+	rf.currentTerm = term
+	// rf.mu.Unlock()
+}
+
+func (rf *Raft) becomeCandidateLocked() {
+	if rf.role == Leader {
+		LOG(rf.me, rf.currentTerm, DVote, "你已经是Leader了,不能成为Candidate")
+		return
+	}
+
+	LOG(rf.me, rf.currentTerm, DLog, "%s->Candidate,term T%d->T%d", rf.role, rf.currentTerm, rf.currentTerm+1)
+	// rf.mu.Lock()
+	rf.currentTerm++
+	rf.role = Candidate
+	rf.vortedFor = rf.me
+	// rf.mu.Unlock()
+}
+
+func (rf *Raft) becomeLeaderLocked() {
+	if rf.role != Candidate {
+		LOG(rf.me, rf.currentTerm, DVote, "只有Candidate能成为Leader")
+		return
+	}
+
+	LOG(rf.me, rf.currentTerm, DLeader, "Become Leader,term T%d", rf.role, rf.currentTerm)
+	// rf.mu.Lock()
+	rf.role = Leader
+	// rf.mu.Unlock()
+}
+
+func (rf *Raft) resetElectionTimerLocked() {
+	rf.electionStart = time.Now()
+	randge := int64(electionTimeoutMax - electionTimeoutMin)
+	rf.electionTimeout = electionTimeoutMin + time.Duration(rand.Int63n(randge))
+}
+
+func (rf *Raft) isElecationTimeoutLocked() bool {
+	//Since计算当前时间与start差值
+	return time.Since(rf.electionStart) > rf.electionTimeout
 }
 
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
-	var term int
-	var isleader bool
+	// var term int
+	// var isleader bool
 	// Your code here (PartA).
-	return term, isleader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.currentTerm, rf.role == Leader
 }
 
 // save Raft's persistent state to stable storage,
@@ -124,17 +201,53 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (PartA, PartB).
+	//发送包含任期以及发送者id
+	Term        int
+	CandidateId int
 }
 
 // example RequestVote RPC reply structure.
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (PartA).
+	//返回包含任期以及是否同意
+	Term         int
+	VotedGranted bool
 }
 
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (PartA, PartB).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	reply.Term = rf.currentTerm
+	// if rf.contextLostLocked(rf.role, rf.currentTerm) {
+	// 	LOG(rf.me, rf.currentTerm, DVote, "收到的发送状态异常")
+	// }
+	//传入任期小于自己
+	if rf.currentTerm > args.Term {
+		LOG(rf.me, rf.currentTerm, DVote, "拒绝请求S%d,T%d>T%d", args.CandidateId, args.Term, rf.currentTerm)
+		reply.VotedGranted = false
+		return
+	}
+	//大于任期则自动变
+	if rf.currentTerm < args.Term {
+		rf.becomeFollowerLocked(args.Term)
+	}
+
+	//投过票了，(becomeFollower比自己大的任期会清空选票)
+	if rf.vortedFor != -1 {
+		LOG(rf.me, rf.currentTerm, DVote, "拒绝请求S%d,已经投票给S%d", args.CandidateId, rf.vortedFor)
+		reply.VotedGranted = false
+		return
+	}
+
+	reply.VotedGranted = true
+	rf.vortedFor = args.CandidateId
+	rf.resetElectionTimerLocked()
+	LOG(rf.me, rf.currentTerm, DVote, "提交选票->S%d", args.CandidateId)
+	return
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -210,11 +323,81 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-func (rf *Raft) ticker() {
-	for rf.killed() == false {
+// 期间任期未改变，状态未变化返回false
+func (rf *Raft) contextLostLocked(role Role, term int) bool {
+	return !(rf.currentTerm == term && rf.role == role)
+}
+
+func (rf *Raft) startElecation(term int) bool {
+	votes := 0
+	askVoteFromPeer := func(peer int, args *RequestVoteArgs) {
+		reply := &RequestVoteReply{}
+		ok := rf.sendRequestVote(peer, args, reply)
+
+		//上锁，并查看是是否答应
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+		if !ok {
+			LOG(rf.me, rf.currentTerm, DDebug, "Ask vote from S%d,lost or error", peer)
+			return
+		}
+
+		//如果自己的任期小于返回任期
+		if reply.Term > rf.currentTerm {
+			rf.becomeFollowerLocked(reply.Term)
+			return
+		}
+
+		//检查状态是否变化
+		if rf.contextLostLocked(rf.role, rf.currentTerm) {
+			LOG(rf.me, rf.currentTerm, DVote, "期间状态发生变化,终止投票S%d", peer)
+			return
+		}
+
+		//确定发送没有问题，返回值为愿意投票
+		if reply.VotedGranted {
+			votes++
+			if votes > len(rf.peers)/2 {
+				rf.becomeLeaderLocked()
+				//同步其他日志，宣示主权和心跳
+				go rf.replicationTicker(term)
+			}
+		}
+	}
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.contextLostLocked(Candidate, term) {
+		LOG(rf.me, rf.currentTerm, DVote, "期间状态发生变化,终止投票S%s", rf.role)
+		return false
+	}
+	for peer := 0; peer < len(rf.peers); peer++ {
+		if peer == rf.me {
+			votes++
+			continue
+		}
+		args := &RequestVoteArgs{
+			Term:        rf.currentTerm,
+			CandidateId: rf.me,
+		}
+		//askVoteFromPeer是指构造 RPC 参数、发送 RPC等待结果、对 RPC 结果进行处理,写成函数写在上面了
+		go askVoteFromPeer(peer, args)
+	}
+
+	return true
+}
+
+func (rf *Raft) electionTicker() {
+	for !rf.killed() {
 
 		// Your code here (PartA)
 		// Check if a leader election should be started.
+		rf.mu.Lock()
+		if rf.role != Leader && rf.isElecationTimeoutLocked() {
+			rf.becomeCandidateLocked()
+			go rf.startElecation(rf.currentTerm)
+		}
+		rf.mu.Unlock()
 
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
@@ -240,12 +423,16 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (PartA, PartB, PartC).
+	//PartA
+	rf.currentTerm = 0
+	rf.role = Follower
+	rf.vortedFor = -1
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
-	go rf.ticker()
+	go rf.electionTicker()
 
 	return rf
 }
