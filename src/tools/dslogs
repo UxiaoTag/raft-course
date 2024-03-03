@@ -46,7 +46,7 @@ def list_topics(value: Optional[str]):
 
 
 def main(
-    file: typer.FileText = typer.Argument(None, help="File to read, stdin otherwise"),
+    file: typer.FileText = typer.Argument(None, help="File to read, stdin otherwise",encoding='UTF-16'),
     colorize: bool = typer.Option(True, "--no-color"),
     n_columns: Optional[int] = typer.Option(None, "--columns", "-c"),
     withTime: bool = typer.Option(False, "--time", "-t"),
