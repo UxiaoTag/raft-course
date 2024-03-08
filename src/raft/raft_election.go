@@ -14,6 +14,9 @@ type RequestVoteArgs struct {
 	//发送包含任期以及发送者id
 	Term        int
 	CandidateId int
+
+	lastLogIndex int
+	lastLogTerm  int
 }
 
 // example RequestVote RPC reply structure.
@@ -34,6 +37,17 @@ func (rf *Raft) resetElectionTimerLocked() {
 func (rf *Raft) isElecationTimeoutLocked() bool {
 	//Since计算当前时间与start差值
 	return time.Since(rf.electionStart) > rf.electionTimeout
+}
+
+// ture 则可以接受up-to-date
+func (rf *Raft) isMoreUpToDateLocked(candidateIndex int, candidateTerm int) bool {
+	l := len(rf.log)
+	lastTerm, lastIndex := rf.log[l-1].Term, l-1
+
+	if lastTerm != candidateTerm {
+		return candidateTerm > lastTerm
+	}
+	return candidateIndex > lastIndex
 }
 
 // example RequestVote RPC handler.
@@ -57,13 +71,18 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.becomeFollowerLocked(args.Term)
 	}
 
-	//投过票了，(becomeFollower比自己大的任期会清空选票)
-	if rf.vortedFor != -1 {
+	//投过票了，(becomeFollower比自己大的任期会清空选票),完善一下逻辑
+	if rf.vortedFor != -1 && rf.vortedFor != args.CandidateId {
 		LOG(rf.me, rf.currentTerm, DVote, "Reject S%d,vortedFor S%d", args.CandidateId, rf.vortedFor)
 		reply.VotedGranted = false
 		return
 	}
 
+	// check log, only grante vote when the candidates have more up-to-date log
+	if !rf.isMoreUpToDateLocked(args.lastLogIndex, args.lastLogTerm) {
+		LOG(rf.me, rf.currentTerm, DVote, "Reject S%d, index%d<len%d", args.CandidateId, args.lastLogIndex, len(rf.log))
+		return
+	}
 	reply.VotedGranted = true
 	rf.vortedFor = args.CandidateId
 	rf.resetElectionTimerLocked()
@@ -152,8 +171,11 @@ func (rf *Raft) startElecation(term int) bool {
 			continue
 		}
 		args := &RequestVoteArgs{
-			Term:        rf.currentTerm,
-			CandidateId: rf.me,
+			Term:         rf.currentTerm,
+			CandidateId:  rf.me,
+			lastLogIndex: len(rf.log) - 1,
+			//不确定
+			lastLogTerm: rf.log[len(rf.log)-1].Term,
 		}
 		//askVoteFromPeer是指构造 RPC 参数、发送 RPC等待结果、对 RPC 结果进行处理,写成函数写在上面了
 		go askVoteFromPeer(peer, args)
