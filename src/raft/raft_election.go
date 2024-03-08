@@ -7,17 +7,6 @@ import (
 	//	"course/labgob"
 )
 
-func (rf *Raft) resetElectionTimerLocked() {
-	rf.electionStart = time.Now()
-	randge := int64(electionTimeoutMax - electionTimeoutMin)
-	rf.electionTimeout = electionTimeoutMin + time.Duration(rand.Int63n(randge))
-}
-
-func (rf *Raft) isElecationTimeoutLocked() bool {
-	//Since计算当前时间与start差值
-	return time.Since(rf.electionStart) > rf.electionTimeout
-}
-
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
 type RequestVoteArgs struct {
@@ -34,6 +23,17 @@ type RequestVoteReply struct {
 	//返回包含任期以及是否同意
 	Term         int
 	VotedGranted bool
+}
+
+func (rf *Raft) resetElectionTimerLocked() {
+	rf.electionStart = time.Now()
+	randge := int64(electionTimeoutMax - electionTimeoutMin)
+	rf.electionTimeout = electionTimeoutMin + time.Duration(rand.Int63n(randge))
+}
+
+func (rf *Raft) isElecationTimeoutLocked() bool {
+	//Since计算当前时间与start差值
+	return time.Since(rf.electionStart) > rf.electionTimeout
 }
 
 // example RequestVote RPC handler.

@@ -43,6 +43,13 @@ const (
 	Leader    Role = "Leader"
 )
 
+// 定义日志的结构
+type LogEntry struct {
+	Term         int         //the log
+	CommandValid bool        //if applied is true
+	Command      interface{} //the log
+}
+
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
 // tester) on the same server, via the applyCh passed to Make(). set
@@ -82,6 +89,13 @@ type Raft struct {
 
 	electionStart   time.Time     //选举起始点
 	electionTimeout time.Duration //选举时间间隔
+
+	log []LogEntry //log in Peer's local
+
+	//used in Leader
+	//匹配点视图
+	nextIndex  []int //for each server, index of the next log entryto send to that server (initialized to leaderlast log index + 1)
+	matchIndex []int //for each server, index of highest log entryknown to be replicated on server(initialized to 0,increases monotonically)
 }
 
 func (rf *Raft) becomeFollowerLocked(term int) {
@@ -127,6 +141,14 @@ func (rf *Raft) becomeLeaderLocked() {
 	// rf.mu.Lock()
 	rf.role = Leader
 	// rf.mu.Unlock()
+
+	//成为leader之后需要维护matchIndex和nextIndex
+	for peer := 0; peer < len(rf.peers); peer++ {
+		//设定所有其他peer的下一个日志为leader的下一个日志
+		rf.nextIndex[peer] = len(rf.log)
+		//设定所有其他peer和leader还没匹配过日志
+		rf.matchIndex[peer] = 0
+	}
 }
 
 // return currentTerm and whether this server
@@ -258,6 +280,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.currentTerm = 0
 	rf.role = Follower
 	rf.vortedFor = -1
+
+	//PartB
+	rf.log = append(rf.log, LogEntry{})
+
+	rf.nextIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
