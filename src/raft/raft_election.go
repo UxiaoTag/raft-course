@@ -7,27 +7,6 @@ import (
 	//	"course/labgob"
 )
 
-// example RequestVote RPC arguments structure.
-// field names must start with capital letters!
-type RequestVoteArgs struct {
-	// Your data here (PartA, PartB).
-	//发送包含任期以及发送者id
-	Term        int
-	CandidateId int
-
-	LastLogIndex int
-	LastLogTerm  int
-}
-
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
-type RequestVoteReply struct {
-	// Your data here (PartA).
-	//返回包含任期以及是否同意
-	Term         int
-	VotedGranted bool
-}
-
 func (rf *Raft) resetElectionTimerLocked() {
 	rf.electionStart = time.Now()
 	randge := int64(electionTimeoutMax - electionTimeoutMin)
@@ -49,6 +28,27 @@ func (rf *Raft) isMoreUpToDateLocked(candidateIndex int, candidateTerm int) bool
 		return candidateTerm < lastTerm
 	}
 	return candidateIndex < lastIndex
+}
+
+// example RequestVote RPC arguments structure.
+// field names must start with capital letters!
+type RequestVoteArgs struct {
+	// Your data here (PartA, PartB).
+	//发送包含任期以及发送者id
+	Term        int
+	CandidateId int
+
+	LastLogIndex int
+	LastLogTerm  int
+}
+
+// example RequestVote RPC reply structure.
+// field names must start with capital letters!
+type RequestVoteReply struct {
+	// Your data here (PartA).
+	//返回包含任期以及是否同意
+	Term         int
+	VotedGranted bool
 }
 
 // example RequestVote RPC handler.
@@ -73,8 +73,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	//投过票了，(becomeFollower比自己大的任期会清空选票),完善一下逻辑
-	if rf.vortedFor != -1 && rf.vortedFor != args.CandidateId {
-		LOG(rf.me, rf.currentTerm, DVote, "Reject S%d,vortedFor S%d", args.CandidateId, rf.vortedFor)
+	if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
+		LOG(rf.me, rf.currentTerm, DVote, "Reject S%d,votedFor S%d", args.CandidateId, rf.votedFor)
 		reply.VotedGranted = false
 		return
 	}
@@ -85,9 +85,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	reply.VotedGranted = true
-	rf.vortedFor = args.CandidateId
+	rf.votedFor = args.CandidateId
 	rf.resetElectionTimerLocked()
-	LOG(rf.me, rf.currentTerm, DVote, "vortedFor ->S%d", args.CandidateId)
+	LOG(rf.me, rf.currentTerm, DVote, "votedFor ->S%d", args.CandidateId)
 
 }
 
@@ -123,7 +123,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-func (rf *Raft) startElection(term int) bool {
+func (rf *Raft) startElection(term int) {
 	votes := 0
 	askVoteFromPeer := func(peer int, args *RequestVoteArgs) {
 		reply := &RequestVoteReply{}
@@ -161,14 +161,14 @@ func (rf *Raft) startElection(term int) bool {
 	}
 
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	//此处使用l而不是直接使用len(rf.log)是防止一些边界判断检查
-	l := len(rf.log)
+	defer rf.mu.Unlock() //检查应该早于l取值
 	if rf.contextLostLocked(Candidate, term) {
 		LOG(rf.me, rf.currentTerm, DVote, "Context Lost,stop ElecationS%s", rf.role)
-		return false
+		return
 	}
+	//此处使用l而不是直接使用len(rf.log)是防止一些边界判断检查
+	l := len(rf.log)
+
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer == rf.me {
 			votes++
@@ -184,7 +184,6 @@ func (rf *Raft) startElection(term int) bool {
 		go askVoteFromPeer(peer, args)
 	}
 
-	return true
 }
 
 func (rf *Raft) electionTicker() {

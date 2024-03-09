@@ -31,7 +31,7 @@ import (
 const (
 	electionTimeoutMin time.Duration = 250 * time.Millisecond
 	electionTimeoutMax time.Duration = 400 * time.Millisecond
-	replicateInterval  time.Duration = 200 * time.Millisecond
+	replicateInterval  time.Duration = 70 * time.Millisecond
 )
 
 type Role string
@@ -42,13 +42,6 @@ const (
 	Candidate Role = "Candidate"
 	Leader    Role = "Leader"
 )
-
-// 定义日志的结构
-type LogEntry struct {
-	Term         int         //the log
-	CommandValid bool        //if applied is true
-	Command      interface{} //the log
-}
 
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -85,7 +78,7 @@ type Raft struct {
 	//PartA
 	role        Role
 	currentTerm int
-	vortedFor   int //在currentTerm任期是否投过票 -1 means none
+	votedFor    int //在currentTerm任期是否投过票 -1 means none
 
 	electionStart   time.Time     //选举起始点
 	electionTimeout time.Duration //选举时间间隔
@@ -117,7 +110,7 @@ func (rf *Raft) becomeFollowerLocked(term int) {
 	rf.role = Follower
 	// important! Could only reset the `votedFor` when term increased
 	if term > rf.currentTerm {
-		rf.vortedFor = -1
+		rf.votedFor = -1
 	}
 	rf.currentTerm = term
 	// rf.mu.Unlock()
@@ -133,7 +126,7 @@ func (rf *Raft) becomeCandidateLocked() {
 	// rf.mu.Lock()
 	rf.currentTerm++
 	rf.role = Candidate
-	rf.vortedFor = rf.me
+	rf.votedFor = rf.me
 	// rf.mu.Unlock()
 	rf.resetElectionTimerLocked()
 }
@@ -295,7 +288,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	//PartA
 	rf.currentTerm = 0
 	rf.role = Follower
-	rf.vortedFor = -1
+	rf.votedFor = -1
 
 	//PartB
 	rf.log = append(rf.log, LogEntry{})

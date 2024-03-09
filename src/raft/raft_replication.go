@@ -5,6 +5,13 @@ import (
 	"time"
 )
 
+// 定义日志的结构
+type LogEntry struct {
+	Term         int         //the log
+	CommandValid bool        //if applied is true
+	Command      interface{} //the log
+}
+
 // 定义发送或取消心跳rpc
 type AppendEntriesArgs struct {
 	Term     int
@@ -59,7 +66,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//在这种情况下，Follower 会拒绝接受 Leader 发送的日志，并打印相应的日志以及进行必要的处理
 	//append日志需要保证append之前的日志是正确的
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,Perv log not match [%d]:T%d!=T%d", args.LeaderId, args.PrevLogIndex, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,Prev log not match [%d]:T%d!=T%d", args.LeaderId, args.PrevLogIndex, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
 		//然后等待心跳逻辑重新发送更低的试探点
 		rf.resetElectionTimerLocked()
 		return
@@ -172,15 +179,15 @@ func (rf *Raft) startReplication(term int) bool {
 		}
 
 		//获取peer中日志的试探点
-		pervIdx := rf.nextIndex[peer] - 1
-		pervTerm := rf.log[pervIdx].Term
+		prevIdx := rf.nextIndex[peer] - 1
+		prevTerm := rf.log[prevIdx].Term
 
 		args := &AppendEntriesArgs{
 			Term:         rf.currentTerm,
 			LeaderId:     rf.me,
-			PrevLogIndex: pervIdx,
-			PrevLogTerm:  pervTerm,
-			Entries:      rf.log[pervIdx+1:],
+			PrevLogIndex: prevIdx,
+			PrevLogTerm:  prevTerm,
+			Entries:      rf.log[prevIdx+1:],
 			LeaderCommit: rf.commitIndex,
 		}
 		go replicateToPeer(peer, args)
