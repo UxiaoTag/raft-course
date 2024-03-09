@@ -1,6 +1,9 @@
 package raft
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // 定义发送或取消心跳rpc
 type AppendEntriesArgs struct {
@@ -11,6 +14,9 @@ type AppendEntriesArgs struct {
 	PrevLogIndex int
 	PrevLogTerm  int
 	Entries      []LogEntry
+
+	//used to update follower
+	LeaderCommit int
 }
 
 type AppendEntriesReply struct {
@@ -65,7 +71,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Follower append log,(%d,%d]", args.LeaderId, args.PrevLogIndex, args.PrevLogIndex+len(args.Entries))
 	reply.Success = true
 
-	//TODO:hanle LeaderCommit
+	//hanle LeaderCommit
+
+	if args.LeaderCommit > rf.commitIndex {
+		LOG(rf.me, rf.currentTerm, DApply, "Follower Update The commit index %d->%d", rf.commitIndex, args.LeaderCommit)
+		rf.commitIndex = args.LeaderCommit
+		rf.applyCond.Signal()
+	}
 
 	//清空选举时钟
 	rf.resetElectionTimerLocked()
@@ -78,11 +90,23 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
+// 获取日志的主要匹配值
+func (rf *Raft) getmajorityMatchedLocked() int {
+	tmpIndex := make([]int, len(rf.peers))
+	copy(tmpIndex, rf.matchIndex)
+	//此处有疑问sort.Ints(tmpIndex)不能直接用吗
+	sort.Ints(sort.IntSlice(tmpIndex))
+	//一般都是奇数个点，实话说感觉应该不太影响，-1也就只是日志修改判断比较保守
+	majorityIdx := (len(rf.peers) - 1) / 2
+	LOG(rf.me, rf.currentTerm, DDebug, "Match index after sort: %v, majority[%d]=%d", tmpIndex, majorityIdx, tmpIndex[majorityIdx])
+	return tmpIndex[majorityIdx]
+}
+
 // 心跳启动函数
 func (rf *Raft) startReplication(term int) bool {
 
-	//单个rpc发送心跳函数
-	replicationToPeer := func(peer int, args *AppendEntriesArgs) {
+	//单个rpc发送心跳函数replicateToPeer
+	replicateToPeer := func(peer int, args *AppendEntriesArgs) {
 		reply := &AppendEntriesReply{}
 		ok := rf.sendAppendEntries(peer, args, reply)
 		rf.mu.Lock()
@@ -91,8 +115,14 @@ func (rf *Raft) startReplication(term int) bool {
 			LOG(rf.me, rf.currentTerm, DLog, "->S%d,Lost send", peer)
 			return
 		}
+		// align term
 		if reply.Term > rf.currentTerm {
 			rf.becomeFollowerLocked(reply.Term)
+			return
+		}
+		// check context lost
+		if rf.contextLostLocked(Leader, term) {
+			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Context Lost, T%d:Leader->T%d:%s", peer, term, rf.currentTerm, rf.role)
 			return
 		}
 		//说明你收到的是拒绝心跳,你可能需要下探你的底线
@@ -106,7 +136,7 @@ func (rf *Raft) startReplication(term int) bool {
 			}
 			//这里的逻辑时每次间隔一个任期进行日志获取，每次下探一个任期。
 			rf.nextIndex[peer] = idx + 1
-			LOG(rf.me, rf.currentTerm, DLog, "Log not matched in %d, Update next=%d", args.PrevLogIndex, rf.nextIndex[peer])
+			LOG(rf.me, rf.currentTerm, DLog, "->S%d, Log not matched in %d, Update next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
 			return
 		}
 
@@ -115,20 +145,27 @@ func (rf *Raft) startReplication(term int) bool {
 		rf.matchIndex[peer] = args.PrevLogIndex + len(args.Entries)
 		rf.nextIndex[peer] = rf.matchIndex[peer] + 1
 
-		//TODO: update the commitIndex
+		//update the commitIndex
+		//主要匹配通过对匹配到的日志取中位数得到的进度进行应用
+		majorityMatched := rf.getmajorityMatchedLocked()
+		if majorityMatched > rf.commitIndex {
+			LOG(rf.me, rf.currentTerm, DApply, "Leader update the commit index %d->%d", rf.commitIndex, majorityMatched)
+			rf.commitIndex = majorityMatched
+			rf.applyCond.Signal()
+		}
 
 	}
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
 	if rf.contextLostLocked(Leader, term) {
-		LOG(rf.me, rf.currentTerm, DLeader, "Leader[T%d]->%s[T%d],Lost Leader", term, rf.role, rf.currentTerm)
+		LOG(rf.me, rf.currentTerm, DLeader, "Leader[T%d]->%s[T%d],Context Lost", term, rf.role, rf.currentTerm)
 		return false
 	}
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer == rf.me {
 			// Don't forget to update Leader's matchIndex
-			//这里再becomeLeader已经更新过了，但是在这里再更新一次
 			rf.matchIndex[peer] = len(rf.log) - 1
 			rf.nextIndex[peer] = len(rf.log)
 			continue
@@ -144,8 +181,9 @@ func (rf *Raft) startReplication(term int) bool {
 			PrevLogIndex: pervIdx,
 			PrevLogTerm:  pervTerm,
 			Entries:      rf.log[pervIdx+1:],
+			LeaderCommit: rf.commitIndex,
 		}
-		go replicationToPeer(peer, args)
+		go replicateToPeer(peer, args)
 	}
 	return true
 }

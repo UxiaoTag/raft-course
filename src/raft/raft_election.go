@@ -15,8 +15,8 @@ type RequestVoteArgs struct {
 	Term        int
 	CandidateId int
 
-	lastLogIndex int
-	lastLogTerm  int
+	LastLogIndex int
+	LastLogTerm  int
 }
 
 // example RequestVote RPC reply structure.
@@ -39,15 +39,16 @@ func (rf *Raft) isElecationTimeoutLocked() bool {
 	return time.Since(rf.electionStart) > rf.electionTimeout
 }
 
-// ture 则可以接受up-to-date
+// ture 则代表自己的日志更大
 func (rf *Raft) isMoreUpToDateLocked(candidateIndex int, candidateTerm int) bool {
 	l := len(rf.log)
 	lastTerm, lastIndex := rf.log[l-1].Term, l-1
 
+	LOG(rf.me, rf.currentTerm, DVote, "Commpare last log,Me:[%d]T%d, Candidate:[%d]T%d", lastIndex, lastTerm, candidateIndex, candidateTerm)
 	if lastTerm != candidateTerm {
-		return candidateTerm > lastTerm
+		return candidateTerm < lastTerm
 	}
-	return candidateIndex > lastIndex
+	return candidateIndex < lastIndex
 }
 
 // example RequestVote RPC handler.
@@ -79,8 +80,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// check log, only grante vote when the candidates have more up-to-date log
-	if !rf.isMoreUpToDateLocked(args.lastLogIndex, args.lastLogTerm) {
-		LOG(rf.me, rf.currentTerm, DVote, "Reject S%d, index%d<len%d", args.CandidateId, args.lastLogIndex, len(rf.log))
+	if rf.isMoreUpToDateLocked(args.LastLogIndex, args.LastLogTerm) {
+		LOG(rf.me, rf.currentTerm, DVote, "Reject S%d,Candidate less up-to-date", args.CandidateId)
 		return
 	}
 	reply.VotedGranted = true
@@ -122,7 +123,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-func (rf *Raft) startElecation(term int) bool {
+func (rf *Raft) startElection(term int) bool {
 	votes := 0
 	askVoteFromPeer := func(peer int, args *RequestVoteArgs) {
 		reply := &RequestVoteReply{}
@@ -161,8 +162,11 @@ func (rf *Raft) startElecation(term int) bool {
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	//此处使用l而不是直接使用len(rf.log)是防止一些边界判断检查
+	l := len(rf.log)
 	if rf.contextLostLocked(Candidate, term) {
-		LOG(rf.me, rf.currentTerm, DVote, "期间状态发生变化,终止投票S%s", rf.role)
+		LOG(rf.me, rf.currentTerm, DVote, "Context Lost,stop ElecationS%s", rf.role)
 		return false
 	}
 	for peer := 0; peer < len(rf.peers); peer++ {
@@ -173,9 +177,8 @@ func (rf *Raft) startElecation(term int) bool {
 		args := &RequestVoteArgs{
 			Term:         rf.currentTerm,
 			CandidateId:  rf.me,
-			lastLogIndex: len(rf.log) - 1,
-			//不确定
-			lastLogTerm: rf.log[len(rf.log)-1].Term,
+			LastLogIndex: l - 1,
+			LastLogTerm:  rf.log[l-1].Term,
 		}
 		//askVoteFromPeer是指构造 RPC 参数、发送 RPC等待结果、对 RPC 结果进行处理,写成函数写在上面了
 		go askVoteFromPeer(peer, args)
@@ -192,7 +195,7 @@ func (rf *Raft) electionTicker() {
 		rf.mu.Lock()
 		if rf.role != Leader && rf.isElecationTimeoutLocked() {
 			rf.becomeCandidateLocked()
-			go rf.startElecation(rf.currentTerm)
+			go rf.startElection(rf.currentTerm)
 		}
 		rf.mu.Unlock()
 

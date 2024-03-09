@@ -90,6 +90,13 @@ type Raft struct {
 	electionStart   time.Time     //选举起始点
 	electionTimeout time.Duration //选举时间间隔
 
+	//commit index and last applied
+
+	commitIndex int //全局日志提交进度
+	lastApplied int //本 Peer 日志 apply 进度
+	applyCond   *sync.Cond
+	applyCh     chan ApplyMsg //此处有疑问
+
 	log []LogEntry //log in Peer's local
 
 	//used in Leader
@@ -223,16 +230,25 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	rf.mu.Lock()
+	defer rf.mu.Unlock() //出现data race请先检查锁有没有上好
+	// index := -1
+	// term := -1
+	// isLeader := true
 
 	// Your code here (PartB).
 	if rf.role != Leader {
-		isLeader = false
+		// isLeader = false
+		return 0, 0, false
 	}
+	rf.log = append(rf.log, LogEntry{
+		CommandValid: true,
+		Command:      command,
+		Term:         rf.currentTerm,
+	})
+	LOG(rf.me, rf.currentTerm, DLeader, "Leader accept log [%d]T%d", len(rf.log)-1, rf.currentTerm)
 
-	return index, term, isLeader
+	return len(rf.log) - 1, rf.currentTerm, true //这里-1踩了一个坑，事实上你的index确实应该从0开始记(前面有一个空日志，直接算会从1记)
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -284,14 +300,22 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	//PartB
 	rf.log = append(rf.log, LogEntry{})
 
+	//init leader view
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
+
+	//init used for apply
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+	rf.applyCond = sync.NewCond(&rf.mu)
+	rf.applyCh = applyCh
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
 	go rf.electionTicker()
+	go rf.applicationTicker()
 
 	return rf
 }
