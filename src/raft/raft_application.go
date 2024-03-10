@@ -25,7 +25,7 @@ func (rf *Raft) applicationTicker() {
 
 		//这里是应用成功后，修改本地apply进度
 		rf.mu.Lock()
-		LOG(rf.me, rf.currentTerm, DApply, "Apply log for [%d,%d]", rf.lastApplied+1, rf.lastApplied+len(entries))
+		LOG(rf.me, rf.currentTerm, DApply, "Apply log for [%d, %d]", rf.lastApplied+1, rf.lastApplied+len(entries))
 		rf.lastApplied += len(entries)
 		rf.mu.Unlock()
 	}

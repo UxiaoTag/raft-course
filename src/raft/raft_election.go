@@ -21,9 +21,9 @@ func (rf *Raft) isElecationTimeoutLocked() bool {
 // ture 则代表自己的日志更大
 func (rf *Raft) isMoreUpToDateLocked(candidateIndex int, candidateTerm int) bool {
 	l := len(rf.log)
-	lastTerm, lastIndex := rf.log[l-1].Term, l-1
+	lastIndex, lastTerm := l-1, rf.log[l-1].Term
 
-	LOG(rf.me, rf.currentTerm, DVote, "Commpare last log,Me:[%d]T%d, Candidate:[%d]T%d", lastIndex, lastTerm, candidateIndex, candidateTerm)
+	LOG(rf.me, rf.currentTerm, DVote, "Compare last log, Me: [%d]T%d, Candidate: [%d]T%d", lastIndex, lastTerm, candidateIndex, candidateTerm)
 	if lastTerm != candidateTerm {
 		return candidateTerm < lastTerm
 	}
@@ -63,7 +63,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// }
 	//传入任期小于自己
 	if rf.currentTerm > args.Term {
-		LOG(rf.me, rf.currentTerm, DVote, "Lower Term,Reject S%d,T%d>T%d", args.CandidateId, args.Term, rf.currentTerm)
+		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject voted, Higher term, T%d>T%d", args.CandidateId, rf.currentTerm, args.Term)
 		reply.VotedGranted = false
 		return
 	}
@@ -74,20 +74,20 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	//投过票了，(becomeFollower比自己大的任期会清空选票),完善一下逻辑
 	if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
-		LOG(rf.me, rf.currentTerm, DVote, "Reject S%d,votedFor S%d", args.CandidateId, rf.votedFor)
+		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject voted, Already voted to S%d", args.CandidateId, rf.votedFor)
 		reply.VotedGranted = false
 		return
 	}
 
 	// check log, only grante vote when the candidates have more up-to-date log
 	if rf.isMoreUpToDateLocked(args.LastLogIndex, args.LastLogTerm) {
-		LOG(rf.me, rf.currentTerm, DVote, "Reject S%d,Candidate less up-to-date", args.CandidateId)
+		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject voted, Candidate less up-to-date", args.CandidateId)
 		return
 	}
 	reply.VotedGranted = true
 	rf.votedFor = args.CandidateId
 	rf.resetElectionTimerLocked()
-	LOG(rf.me, rf.currentTerm, DVote, "votedFor ->S%d", args.CandidateId)
+	LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Vote granted", args.CandidateId)
 
 }
 
@@ -144,7 +144,7 @@ func (rf *Raft) startElection(term int) {
 		}
 
 		//检查状态是否变化
-		if rf.contextLostLocked(rf.role, rf.currentTerm) {
+		if rf.contextLostLocked(Candidate, term) {
 			LOG(rf.me, rf.currentTerm, DVote, "Status Lower,stop ElecationS%d", peer)
 			return
 		}

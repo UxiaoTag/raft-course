@@ -101,7 +101,7 @@ type Raft struct {
 func (rf *Raft) becomeFollowerLocked(term int) {
 	if term < rf.currentTerm {
 		//在此处，你执行了becomeFollower意味着你需要变成follower，你不应该被比你低的任期的所更改状态
-		LOG(rf.me, rf.currentTerm, DError, "Lower TermT%d,sould no be Follower", term)
+		LOG(rf.me, rf.currentTerm, DError, "Can't become Follower, lower term: T%d", term)
 		return
 	}
 
@@ -118,7 +118,7 @@ func (rf *Raft) becomeFollowerLocked(term int) {
 
 func (rf *Raft) becomeCandidateLocked() {
 	if rf.role == Leader {
-		LOG(rf.me, rf.currentTerm, DVote, "you are Leader,not be Candidate")
+		LOG(rf.me, rf.currentTerm, DError, "Leader can't become Candidate")
 		return
 	}
 
@@ -133,11 +133,11 @@ func (rf *Raft) becomeCandidateLocked() {
 
 func (rf *Raft) becomeLeaderLocked() {
 	if rf.role != Candidate {
-		LOG(rf.me, rf.currentTerm, DVote, "just Candidate can be Leader")
+		LOG(rf.me, rf.currentTerm, DError, "Only Candidate can become Leader")
 		return
 	}
 
-	LOG(rf.me, rf.currentTerm, DLeader, "Become LeaderS%d,term T%d", rf.me, rf.currentTerm)
+	LOG(rf.me, rf.currentTerm, DLeader, "Become Leader in T%d", rf.currentTerm)
 	// rf.mu.Lock()
 	rf.role = Leader
 	// rf.mu.Unlock()
