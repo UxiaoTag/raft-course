@@ -33,6 +33,10 @@ const (
 	electionTimeoutMax time.Duration = 400 * time.Millisecond
 	replicateInterval  time.Duration = 70 * time.Millisecond
 )
+const (
+	InvalidTerm  int = 0
+	InvalidIndex int = 0
+)
 
 type Role string
 
@@ -98,6 +102,17 @@ type Raft struct {
 	matchIndex []int //for each server, index of highest log entryknown to be replicated on server(initialized to 0,increases monotonically)
 }
 
+func (rf *Raft) firstLogFor(Term int) int {
+	for i, entry := range rf.log {
+		if entry.Term == Term {
+			return i
+		} else if entry.Term > Term {
+			break
+		}
+	}
+	return InvalidIndex
+}
+
 func (rf *Raft) becomeFollowerLocked(term int) {
 	if term < rf.currentTerm {
 		//在此处，你执行了becomeFollower意味着你需要变成follower，你不应该被比你低的任期的所更改状态
@@ -108,11 +123,16 @@ func (rf *Raft) becomeFollowerLocked(term int) {
 	LOG(rf.me, rf.currentTerm, DLog, "%s->Follower,term T%d->T%d", rf.role, rf.currentTerm, term)
 	// rf.mu.Lock()
 	rf.role = Follower
+	shouldPersist := term != rf.currentTerm
 	// important! Could only reset the `votedFor` when term increased
 	if term > rf.currentTerm {
 		rf.votedFor = -1
 	}
 	rf.currentTerm = term
+	//如果做出了改变再持久化
+	if shouldPersist {
+		rf.persistLocked()
+	}
 	// rf.mu.Unlock()
 }
 
@@ -128,6 +148,8 @@ func (rf *Raft) becomeCandidateLocked() {
 	rf.role = Candidate
 	rf.votedFor = rf.me
 	// rf.mu.Unlock()
+	rf.persistLocked()
+
 	rf.resetElectionTimerLocked()
 }
 
@@ -161,44 +183,6 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	return rf.currentTerm, rf.role == Leader
-}
-
-// save Raft's persistent state to stable storage,
-// where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
-// before you've implemented snapshots, you should pass nil as the
-// second argument to persister.Save().
-// after you've implemented snapshots, pass the current snapshot
-// (or nil if there's not yet a snapshot).
-func (rf *Raft) persist() {
-	// Your code here (PartC).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
-}
-
-// restore previously persisted state.
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
-		return
-	}
-	// Your code here (PartC).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
 }
 
 // the service says it has created a snapshot that has
@@ -239,6 +223,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Command:      command,
 		Term:         rf.currentTerm,
 	})
+
+	//传入日志之后log会改变，故需要持久化到
+	rf.persistLocked()
 	LOG(rf.me, rf.currentTerm, DLeader, "Leader accept log [%d]T%d", len(rf.log)-1, rf.currentTerm)
 
 	return len(rf.log) - 1, rf.currentTerm, true //这里-1踩了一个坑，事实上你的index确实应该从0开始记(前面有一个空日志，直接算会从1记)
@@ -286,7 +273,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (PartA, PartB, PartC).
 	//PartA
-	rf.currentTerm = 0
+	//因为前面定义空任期0
+	rf.currentTerm = 1
 	rf.role = Follower
 	rf.votedFor = -1
 

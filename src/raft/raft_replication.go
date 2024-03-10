@@ -29,6 +29,11 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+
+	//这里由于 Leader 在向 Follower 同步日志每次回撤都要等多个周期，回撤如果写的很烂，匹配探测期就会很长，所以这里定义follower自己也将日志
+	//告诉leader,加快回撤效率
+	ConflictIndex int
+	ConflictTerm  int
 }
 
 // AppendEntries回调函数 RPC
@@ -47,17 +52,22 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
+	//只要任期对齐之后，之后日志对不上导致心跳不正常，也要让选举时钟重置。保证提前执行的return也要执行选举时钟重置
+	defer rf.resetElectionTimerLocked()
 	//任期高，主动让自己变回去
 	if args.Term >= rf.currentTerm {
 		rf.becomeFollowerLocked(args.Term)
 		// LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Append Heart", args.LeaderId) //加入日志之后还需要做日志的比对
 	}
 
-	//这里理解了，大概是当试探点已经大于等于原log时，中间空缺的部分需要重新下放试探点，如果直接运行rf.log[args.PrevLogIndex]会越界。
+	//这里理解了，大概是原log小于当试探点时，中间空缺的部分需要重新下放试探点，如果直接运行rf.log[args.PrevLogIndex]会越界。
 	//这里俩段可以写在一起，但是保证调试看着舒服，就不用and直接连接逻辑了
 	if args.PrevLogIndex >= len(rf.log) {
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,follower log too short, Len:%d<=Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
 		//然后等待心跳逻辑重新发送更低的试探点
+		//用这个加速回撤
+		reply.ConflictIndex = len(rf.log)
+		reply.ConflictTerm = InvalidTerm
 		rf.resetElectionTimerLocked()
 		return
 	}
@@ -68,13 +78,25 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,Prev log not match [%d]:T%d!=T%d", args.LeaderId, args.PrevLogIndex, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
 		//然后等待心跳逻辑重新发送更低的试探点
-		rf.resetElectionTimerLocked()
+
+		//这段逻辑应该也能用，这里是这个任期第一个日志-1
+		// idx := args.PrevLogIndex
+		// iTerm := rf.log[idx].Term
+		// for idx > 0 && rf.log[idx].Term != iTerm {
+		// 	idx--
+		// }
+		// reply.ConflictIndex = idx
+		// reply.ConflictTerm = iTerm
+		reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
+		reply.ConflictIndex = rf.firstLogFor(reply.ConflictTerm)
 		return
 	}
 
 	//append log 这里选择用rf.log[:args.PrevLogIndex+1]因为直接使用len(rf.log)，本身rf.log可能比你传输的日志长，会导致节点不一致
 	//eg L1:12344 F2:12345,探测点为3，传入日志应该为45，如果PrevLogIndex不+1，则F2:12445
 	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+	//此处log改变，需要持久化
+	rf.persistLocked()
 	LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Follower append log,(%d,%d]", args.LeaderId, args.PrevLogIndex, args.PrevLogIndex+len(args.Entries))
 	reply.Success = true
 
@@ -134,15 +156,36 @@ func (rf *Raft) startReplication(term int) bool {
 		}
 		//说明你收到的是拒绝心跳,你可能需要下探你的底线
 		if !reply.Success {
-			// 考虑过rf.nextIndex[peer]=args.PrevLogIndex--，但是一个个点试探太慢了
-			idx := rf.nextIndex[peer] - 1
-			term := rf.log[idx].Term
-			//寻找上一个任期的最新日志进行
-			for idx > 0 && rf.log[idx].Term == term {
-				idx--
+			prevNext := rf.nextIndex[peer]
+			if reply.ConflictTerm == InvalidTerm {
+				//如果传入任期是无效的，直接用传的index
+				rf.nextIndex[peer] = reply.ConflictIndex
+			} else {
+				firstTermIndex := rf.firstLogFor(reply.ConflictTerm)
+				if firstTermIndex != InvalidIndex {
+					//如果有效先试试leader在这个任期有没有log,用leader的index。
+					rf.nextIndex[peer] = firstTermIndex
+				} else {
+					//不行再用follower的index
+					rf.nextIndex[peer] = reply.ConflictIndex
+				}
 			}
-			//这里的逻辑时每次间隔一个任期进行日志获取，每次下探一个任期。
-			rf.nextIndex[peer] = idx + 1
+			// rf.nextIndex[peer] = min(prevNext, rf.nextIndex[peer])该特性用不了
+			//如果优化的值甚至不如原来，没必要优化
+			if rf.nextIndex[peer] > prevNext {
+				rf.nextIndex[peer] = prevNext
+			}
+
+			//优化前
+			// // 考虑过rf.nextIndex[peer]=args.PrevLogIndex--，但是一个个点试探太慢了
+			// idx := rf.nextIndex[peer] - 1
+			// term := rf.log[idx].Term
+			// //寻找上一个任期的最新日志进行
+			// for idx > 0 && rf.log[idx].Term == term {
+			// 	idx--
+			// }
+			// //这里的逻辑时每次间隔一个任期进行日志获取，每次下探一个任期。
+			// rf.nextIndex[peer] = idx + 1
 			LOG(rf.me, rf.currentTerm, DLog, "->S%d, Log not matched in %d, Update next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
 			return
 		}
