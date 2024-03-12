@@ -2,10 +2,19 @@ package raft
 
 import (
 	//	"bytes"
+	"fmt"
 	"math/rand"
 	"time"
 	//	"course/labgob"
 )
+
+func (args *RequestVoteArgs) String() string {
+	return fmt.Sprintf("Candidate-%d T%d, Last:[%d]T%d", args.CandidateId, args.Term, args.LastLogIndex, args.LastLogTerm)
+}
+
+func (reply *RequestVoteReply) String() string {
+	return fmt.Sprintf("T%d, VoteGranted: %v", reply.Term, reply.VoteGranted)
+}
 
 func (rf *Raft) resetElectionTimerLocked() {
 	rf.electionStart = time.Now()
@@ -47,8 +56,8 @@ type RequestVoteArgs struct {
 type RequestVoteReply struct {
 	// Your data here (PartA).
 	//返回包含任期以及是否同意
-	Term         int
-	VotedGranted bool
+	Term        int
+	VoteGranted bool
 }
 
 // example RequestVote RPC handler.
@@ -57,14 +66,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	LOG(rf.me, rf.currentTerm, DDebug, "<- S%d, VoteAsked, Args=%v", args.CandidateId, args.String())
 	reply.Term = rf.currentTerm
 	// if rf.contextLostLocked(rf.role, rf.currentTerm) {
 	// 	LOG(rf.me, rf.currentTerm, DVote, "收到的发送状态异常")
 	// }
 	//传入任期小于自己
+	reply.VoteGranted = false
 	if rf.currentTerm > args.Term {
 		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject voted, Higher term, T%d>T%d", args.CandidateId, rf.currentTerm, args.Term)
-		reply.VotedGranted = false
+		// reply.VoteGranted = false
 		return
 	}
 	//大于任期则自动变
@@ -75,7 +86,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	//投过票了，(becomeFollower比自己大的任期会清空选票),完善一下逻辑
 	if rf.votedFor != -1 && rf.votedFor != args.CandidateId {
 		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject voted, Already voted to S%d", args.CandidateId, rf.votedFor)
-		reply.VotedGranted = false
+		// reply.VoteGranted = false
 		return
 	}
 
@@ -84,7 +95,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		LOG(rf.me, rf.currentTerm, DVote, "-> S%d, Reject voted, Candidate less up-to-date", args.CandidateId)
 		return
 	}
-	reply.VotedGranted = true
+	reply.VoteGranted = true
 	rf.votedFor = args.CandidateId
 	//投票改了故需要修改
 	rf.persistLocked()
@@ -135,10 +146,10 @@ func (rf *Raft) startElection(term int) {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
 		if !ok {
-			LOG(rf.me, rf.currentTerm, DDebug, "Ask vote from S%d,lost or error", peer)
+			LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Ask vote, Lost or error", peer)
 			return
 		}
-
+		LOG(rf.me, rf.currentTerm, DDebug, "<- S%d, VoteAsked, Args=%v", args.CandidateId, args.String())
 		//如果自己的任期小于返回任期
 		if reply.Term > rf.currentTerm {
 			rf.becomeFollowerLocked(reply.Term)
@@ -152,7 +163,7 @@ func (rf *Raft) startElection(term int) {
 		}
 
 		//确定发送没有问题，返回值为愿意投票
-		if reply.VotedGranted {
+		if reply.VoteGranted {
 			votes++
 			if votes > len(rf.peers)/2 {
 				rf.becomeLeaderLocked()
@@ -182,6 +193,7 @@ func (rf *Raft) startElection(term int) {
 			LastLogIndex: l - 1,
 			LastLogTerm:  rf.log[l-1].Term,
 		}
+		LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, AskVote, Args=%v", peer, args.String())
 		//askVoteFromPeer是指构造 RPC 参数、发送 RPC等待结果、对 RPC 结果进行处理,写成函数写在上面了
 		go askVoteFromPeer(peer, args)
 	}

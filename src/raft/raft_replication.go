@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"sort"
 	"time"
 )
@@ -32,8 +33,35 @@ type AppendEntriesReply struct {
 
 	//这里由于 Leader 在向 Follower 同步日志每次回撤都要等多个周期，回撤如果写的很烂，匹配探测期就会很长，所以这里定义follower自己也将日志
 	//告诉leader,加快回撤效率
-	ConflictIndex int
-	ConflictTerm  int
+	ConfilictIndex int
+	ConfilictTerm  int
+}
+
+// 但是情况不能理解是，如果没记错的话，rf.log[0]是一个空日志，输出应该固定有一个是[0,0(1-1)]Term 0
+// longstring将会输出每个任期的日志index持续段，例如[0,3]T1;[4,6]T2
+func (rf *Raft) logString() string {
+	var terms string
+	prevTerm := rf.log[0].Term
+	prevStart := 0
+	for i := 0; i < len(rf.log); i++ {
+		if rf.log[i].Term != prevTerm {
+			terms += fmt.Sprintf(" [%d, %d]T%d;", prevStart, i-1, prevTerm)
+			prevTerm = rf.log[i].Term
+			prevStart = i
+		}
+	}
+	terms += fmt.Sprintf(" [%d, %d]T%d;", prevStart, len(rf.log)-1, prevTerm)
+
+	return terms
+}
+
+func (args *AppendEntriesArgs) String() string {
+	return fmt.Sprintf("Leader-%d, T%d, Prev:[%d]T%d, (%d, %d], CommitIdx: %d",
+		args.LeaderId, args.Term, args.PrevLogIndex, args.PrevLogTerm,
+		args.PrevLogIndex, args.PrevLogIndex+len(args.Entries), args.LeaderCommit)
+}
+func (reply *AppendEntriesReply) String() string {
+	return fmt.Sprintf("T%d, Sucess: %v, ConfilictTerm: [%d]T%d", reply.Term, reply.Success, reply.ConfilictIndex, reply.ConfilictTerm)
 }
 
 // AppendEntries回调函数 RPC
@@ -41,8 +69,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	LOG(rf.me, rf.currentTerm, DDebug, "<- S%d,Receive log,Prev=[%d]T%d,len()=%d", args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
-
+	LOG(rf.me, rf.currentTerm, DDebug, "<- S%d, Appended, Args=%v", args.LeaderId, args.String())
 	reply.Term = rf.currentTerm
 	reply.Success = false
 
@@ -60,14 +87,23 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Append Heart", args.LeaderId) //加入日志之后还需要做日志的比对
 	}
 
+	//如果是日志原因拒绝心跳，就输出一些日志
+	defer func() {
+		if !reply.Success {
+			LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Follower Conflict: [%d]T%d", args.LeaderId, reply.ConfilictIndex, reply.ConfilictTerm)
+			LOG(rf.me, rf.currentTerm, DDebug, "Follower log=%v", rf.logString())
+		}
+	}()
+	//最后的括号表示立即执行
+
 	//这里理解了，大概是原log小于当试探点时，中间空缺的部分需要重新下放试探点，如果直接运行rf.log[args.PrevLogIndex]会越界。
 	//这里俩段可以写在一起，但是保证调试看着舒服，就不用and直接连接逻辑了
 	if args.PrevLogIndex >= len(rf.log) {
 		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,follower log too short, Len:%d<=Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
 		//然后等待心跳逻辑重新发送更低的试探点
-		//用这个加速回撤
-		reply.ConflictIndex = len(rf.log)
-		reply.ConflictTerm = InvalidTerm
+		//如果探测点大于当前，直接给当前日志长度
+		reply.ConfilictIndex = len(rf.log)
+		reply.ConfilictTerm = InvalidTerm
 		rf.resetElectionTimerLocked()
 		return
 	}
@@ -85,10 +121,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// for idx > 0 && rf.log[idx].Term != iTerm {
 		// 	idx--
 		// }
-		// reply.ConflictIndex = idx
-		// reply.ConflictTerm = iTerm
-		reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
-		reply.ConflictIndex = rf.firstLogFor(reply.ConflictTerm)
+		// reply.ConfilictIndex = idx
+		// reply.ConfilictTerm = iTerm
+		//如果不是，则找到日志错误任期的第一份日志的index进行比对
+		reply.ConfilictTerm = rf.log[args.PrevLogIndex].Term
+		reply.ConfilictIndex = rf.firstLogFor(reply.ConfilictTerm)
 		return
 	}
 
@@ -141,9 +178,10 @@ func (rf *Raft) startReplication(term int) bool {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
 		if !ok {
-			LOG(rf.me, rf.currentTerm, DLog, "->S%d,Lost send", peer)
+			LOG(rf.me, rf.currentTerm, DLog, "-> S%d,Lost send", peer)
 			return
 		}
+		LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Append, Reply=%v", peer, reply.String())
 		// align term
 		if reply.Term > rf.currentTerm {
 			rf.becomeFollowerLocked(reply.Term)
@@ -157,17 +195,17 @@ func (rf *Raft) startReplication(term int) bool {
 		//说明你收到的是拒绝心跳,你可能需要下探你的底线
 		if !reply.Success {
 			prevNext := rf.nextIndex[peer]
-			if reply.ConflictTerm == InvalidTerm {
+			if reply.ConfilictTerm == InvalidTerm {
 				//如果传入任期是无效的，直接用传的index
-				rf.nextIndex[peer] = reply.ConflictIndex
+				rf.nextIndex[peer] = reply.ConfilictIndex
 			} else {
-				firstTermIndex := rf.firstLogFor(reply.ConflictTerm)
+				firstTermIndex := rf.firstLogFor(reply.ConfilictTerm)
 				if firstTermIndex != InvalidIndex {
 					//如果有效先试试leader在这个任期有没有log,用leader的index。
 					rf.nextIndex[peer] = firstTermIndex
 				} else {
 					//不行再用follower的index
-					rf.nextIndex[peer] = reply.ConflictIndex
+					rf.nextIndex[peer] = reply.ConfilictIndex
 				}
 			}
 			// rf.nextIndex[peer] = min(prevNext, rf.nextIndex[peer])该特性用不了
@@ -186,7 +224,8 @@ func (rf *Raft) startReplication(term int) bool {
 			// }
 			// //这里的逻辑时每次间隔一个任期进行日志获取，每次下探一个任期。
 			// rf.nextIndex[peer] = idx + 1
-			LOG(rf.me, rf.currentTerm, DLog, "->S%d, Log not matched in %d, Update next=%d", peer, args.PrevLogIndex, rf.nextIndex[peer])
+			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%d", peer, args.PrevLogIndex, rf.log[args.PrevLogIndex].Term, rf.nextIndex[peer]-1, rf.log[rf.nextIndex[peer]-1].Term)
+			LOG(rf.me, rf.currentTerm, DDebug, "Leader log=%v", rf.logString())
 			return
 		}
 
@@ -233,6 +272,7 @@ func (rf *Raft) startReplication(term int) bool {
 			Entries:      rf.log[prevIdx+1:],
 			LeaderCommit: rf.commitIndex,
 		}
+		LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Append, %v", peer, args.String())
 		go replicateToPeer(peer, args)
 	}
 	return true

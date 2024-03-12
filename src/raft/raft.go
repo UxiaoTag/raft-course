@@ -102,6 +102,7 @@ type Raft struct {
 	matchIndex []int //for each server, index of highest log entryknown to be replicated on server(initialized to 0,increases monotonically)
 }
 
+// 顺序寻找该任期最小的日志index
 func (rf *Raft) firstLogFor(Term int) int {
 	for i, entry := range rf.log {
 		if entry.Term == Term {
