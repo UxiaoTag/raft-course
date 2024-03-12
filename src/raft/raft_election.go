@@ -29,8 +29,8 @@ func (rf *Raft) isElecationTimeoutLocked() bool {
 
 // ture 则代表自己的日志更大
 func (rf *Raft) isMoreUpToDateLocked(candidateIndex int, candidateTerm int) bool {
-	l := len(rf.log)
-	lastIndex, lastTerm := l-1, rf.log[l-1].Term
+	// l := rf.log.size()
+	lastIndex, lastTerm := rf.log.last() //l-1,rf.log.at(l-1).Term
 
 	LOG(rf.me, rf.currentTerm, DVote, "Compare last log, Me: [%d]T%d, Candidate: [%d]T%d", lastIndex, lastTerm, candidateIndex, candidateTerm)
 	if lastTerm != candidateTerm {
@@ -180,8 +180,8 @@ func (rf *Raft) startElection(term int) {
 		return
 	}
 	//此处使用l而不是直接使用len(rf.log)是防止一些边界判断检查
-	l := len(rf.log)
-
+	// l := rf.log.size()
+	lastIdx, lastTerm := rf.log.last()
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer == rf.me {
 			votes++
@@ -190,8 +190,8 @@ func (rf *Raft) startElection(term int) {
 		args := &RequestVoteArgs{
 			Term:         rf.currentTerm,
 			CandidateId:  rf.me,
-			LastLogIndex: l - 1,
-			LastLogTerm:  rf.log[l-1].Term,
+			LastLogIndex: lastIdx,
+			LastLogTerm:  lastTerm,
 		}
 		LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, AskVote, Args=%v", peer, args.String())
 		//askVoteFromPeer是指构造 RPC 参数、发送 RPC等待结果、对 RPC 结果进行处理,写成函数写在上面了

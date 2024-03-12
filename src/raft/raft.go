@@ -94,24 +94,13 @@ type Raft struct {
 	applyCond   *sync.Cond
 	applyCh     chan ApplyMsg //此处有疑问
 
-	log []LogEntry //log in Peer's local
+	//这里准备要该成RaftLog
+	log *RaftLog //log in Peer's local
 
 	//used in Leader
 	//匹配点视图
 	nextIndex  []int //for each server, index of the next log entryto send to that server (initialized to leaderlast log index + 1)
 	matchIndex []int //for each server, index of highest log entryknown to be replicated on server(initialized to 0,increases monotonically)
-}
-
-// 顺序寻找该任期最小的日志index
-func (rf *Raft) firstLogFor(Term int) int {
-	for i, entry := range rf.log {
-		if entry.Term == Term {
-			return i
-		} else if entry.Term > Term {
-			break
-		}
-	}
-	return InvalidIndex
 }
 
 func (rf *Raft) becomeFollowerLocked(term int) {
@@ -168,12 +157,17 @@ func (rf *Raft) becomeLeaderLocked() {
 	//成为leader之后需要维护matchIndex和nextIndex
 	for peer := 0; peer < len(rf.peers); peer++ {
 		//设定所有其他peer的下一个日志为leader的下一个日志
-		rf.nextIndex[peer] = len(rf.log)
+		rf.nextIndex[peer] = rf.log.size()
 		//设定所有其他peer和leader还没匹配过日志
 		rf.matchIndex[peer] = 0
 	}
 	//优化，成为leader之后迅速提交一个no-op日志
-	// rf.Start(-1) //这里直接这样写会出问题，还需要研究研究
+	//这样就可以了，通过这种方式。但是会出现term会过于繁杂的问题。
+	// rf.log = append(rf.log, LogEntry{
+	// 	CommandValid: true,
+	// 	Command:      0,
+	// 	Term:         rf.currentTerm,
+	// })
 }
 
 // return currentTerm and whether this server
@@ -194,7 +188,15 @@ func (rf *Raft) GetState() (int, bool) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (PartD).
-
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	LOG(rf.me, rf.currentTerm, DSnap, "Snap on %d", index)
+	if index > rf.commitIndex {
+		LOG(rf.me, rf.currentTerm, DError, "can't snapshot no commit log")
+		return
+	}
+	rf.log.doSnapshot(index, snapshot)
+	rf.persistLocked()
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -221,7 +223,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		// isLeader = false
 		return 0, 0, false
 	}
-	rf.log = append(rf.log, LogEntry{
+	rf.log.append(LogEntry{
 		CommandValid: true,
 		Command:      command,
 		Term:         rf.currentTerm,
@@ -229,9 +231,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	//传入日志之后log会改变，故需要持久化到
 	rf.persistLocked()
-	LOG(rf.me, rf.currentTerm, DLeader, "Leader accept log [%d]T%d", len(rf.log)-1, rf.currentTerm)
+	LOG(rf.me, rf.currentTerm, DLeader, "Leader accept log [%d]T%d", rf.log.size()-1, rf.currentTerm)
 
-	return len(rf.log) - 1, rf.currentTerm, true //这里-1踩了一个坑，事实上你的index确实应该从0开始记(前面有一个空日志，直接算会从1记)
+	return rf.log.size() - 1, rf.currentTerm, true //这里-1踩了一个坑，事实上你的index确实应该从0开始记(前面有一个空日志，直接算会从1记)
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -282,7 +284,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.votedFor = -1
 
 	//PartB
-	rf.log = append(rf.log, LogEntry{})
+	// rf.log.append(LogEntry{})
+	//不加空日志的主要原因NewLog已经加了
+	rf.log = NewLog(InvalidIndex, InvalidTerm, nil, nil)
 
 	//init leader view
 	rf.nextIndex = make([]int, len(rf.peers))

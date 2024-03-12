@@ -37,24 +37,6 @@ type AppendEntriesReply struct {
 	ConfilictTerm  int
 }
 
-// 但是情况不能理解是，如果没记错的话，rf.log[0]是一个空日志，输出应该固定有一个是[0,0(1-1)]Term 0
-// longstring将会输出每个任期的日志index持续段，例如[0,3]T1;[4,6]T2
-func (rf *Raft) logString() string {
-	var terms string
-	prevTerm := rf.log[0].Term
-	prevStart := 0
-	for i := 0; i < len(rf.log); i++ {
-		if rf.log[i].Term != prevTerm {
-			terms += fmt.Sprintf(" [%d, %d]T%d;", prevStart, i-1, prevTerm)
-			prevTerm = rf.log[i].Term
-			prevStart = i
-		}
-	}
-	terms += fmt.Sprintf(" [%d, %d]T%d;", prevStart, len(rf.log)-1, prevTerm)
-
-	return terms
-}
-
 func (args *AppendEntriesArgs) String() string {
 	return fmt.Sprintf("Leader-%d, T%d, Prev:[%d]T%d, (%d, %d], CommitIdx: %d",
 		args.LeaderId, args.Term, args.PrevLogIndex, args.PrevLogTerm,
@@ -90,19 +72,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	defer func() {
 		if !reply.Success {
 			LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Follower Conflict: [%d]T%d", args.LeaderId, reply.ConfilictIndex, reply.ConfilictTerm)
-			LOG(rf.me, rf.currentTerm, DDebug, "Follower log=%v", rf.logString())
+			LOG(rf.me, rf.currentTerm, DDebug, "Follower log=%v", rf.log.String())
 		}
 	}()
 	//最后的括号表示立即执行
 
 	//这里理解了，大概是原log小于当试探点时，中间空缺的部分需要重新下放试探点，如果直接运行rf.log[args.PrevLogIndex]会越界。
 	//这里俩段可以写在一起，但是保证调试看着舒服，就不用and直接连接逻辑了
-	if args.PrevLogIndex >= len(rf.log) {
+	if args.PrevLogIndex >= rf.log.size() {
 		//然后等待心跳逻辑重新发送更低的试探点
 		//如果探测点大于当前，直接给当前日志长度
-		reply.ConfilictIndex = len(rf.log)
+		reply.ConfilictIndex = rf.log.size()
 		reply.ConfilictTerm = InvalidTerm
-		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,follower log too short, Len:%d<=Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,follower log too short, Len:%d<=Prev:%d", args.LeaderId, rf.log.size(), args.PrevLogIndex)
 		// rf.resetElectionTimerLocked()
 		return
 	}
@@ -110,7 +92,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//如果 Follower 的前面的日志与 Leader 发送的日志在相同的位置处的 Term 不一致，这可能表示存在日志冲突或者日志错误的情况。
 	//在这种情况下，Follower 会拒绝接受 Leader 发送的日志，并打印相应的日志以及进行必要的处理
 	//append日志需要保证append之前的日志是正确的
-	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	if rf.log.at(args.PrevLogIndex).Term != args.PrevLogTerm {
 		//然后等待心跳逻辑重新发送更低的试探点
 
 		//这段逻辑应该也能用，这里是这个任期第一个日志-1
@@ -122,15 +104,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// reply.ConfilictIndex = idx
 		// reply.ConfilictTerm = iTerm
 		//如果不是，则找到日志错误任期的第一份日志的index进行比对
-		reply.ConfilictTerm = rf.log[args.PrevLogIndex].Term
-		reply.ConfilictIndex = rf.firstLogFor(reply.ConfilictTerm)
-		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,Prev log not match [%d]:T%d!=T%d", args.LeaderId, args.PrevLogIndex, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
+		reply.ConfilictTerm = rf.log.at(args.PrevLogIndex).Term
+		reply.ConfilictIndex = rf.log.firstForTerm(reply.ConfilictTerm)
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,Prev log not match [%d]:T%d!=T%d", args.LeaderId, args.PrevLogIndex, rf.log.at(args.PrevLogIndex).Term, args.PrevLogTerm)
 		return
 	}
 
 	//append log 这里选择用rf.log[:args.PrevLogIndex+1]因为直接使用len(rf.log)，本身rf.log可能比你传输的日志长，会导致节点不一致
 	//eg L1:12344 F2:12345,探测点为3，传入日志应该为45，如果PrevLogIndex不+1，则F2:12445
-	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+	// rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+	rf.log.appendFrom(args.PrevLogIndex, args.Entries)
 	//此处log改变，需要持久化
 	rf.persistLocked()
 	LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Follower append log,(%d,%d]", args.LeaderId, args.PrevLogIndex, args.PrevLogIndex+len(args.Entries))
@@ -198,7 +181,7 @@ func (rf *Raft) startReplication(term int) bool {
 				//如果传入任期是无效的，直接用传的index
 				rf.nextIndex[peer] = reply.ConfilictIndex
 			} else {
-				firstTermIndex := rf.firstLogFor(reply.ConfilictTerm)
+				firstTermIndex := rf.log.firstForTerm(reply.ConfilictTerm)
 				if firstTermIndex != InvalidIndex {
 					//如果有效先试试leader在这个任期有没有log,用leader的index。
 					rf.nextIndex[peer] = firstTermIndex
@@ -223,8 +206,8 @@ func (rf *Raft) startReplication(term int) bool {
 			// }
 			// //这里的逻辑时每次间隔一个任期进行日志获取，每次下探一个任期。
 			// rf.nextIndex[peer] = idx + 1
-			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%d", peer, args.PrevLogIndex, rf.log[args.PrevLogIndex].Term, rf.nextIndex[peer]-1, rf.log[rf.nextIndex[peer]-1].Term)
-			LOG(rf.me, rf.currentTerm, DDebug, "Leader log=%v", rf.logString())
+			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%d", peer, args.PrevLogIndex, rf.log.at(args.PrevLogIndex).Term, rf.nextIndex[peer]-1, rf.log.at(rf.nextIndex[peer]-1).Term)
+			LOG(rf.me, rf.currentTerm, DDebug, "Leader log=%v", rf.log.String())
 			return
 		}
 
@@ -236,7 +219,7 @@ func (rf *Raft) startReplication(term int) bool {
 		//update the commitIndex
 		//主要匹配通过对匹配到的日志取中位数得到的进度进行应用
 		majorityMatched := rf.getmajorityIndexLocked()
-		if majorityMatched > rf.commitIndex && rf.log[majorityMatched].Term == rf.currentTerm {
+		if majorityMatched > rf.commitIndex && rf.log.at(majorityMatched).Term == rf.currentTerm {
 			LOG(rf.me, rf.currentTerm, DApply, "Leader update the commit index %d->%d", rf.commitIndex, majorityMatched)
 			rf.commitIndex = majorityMatched
 			rf.applyCond.Signal()
@@ -254,21 +237,21 @@ func (rf *Raft) startReplication(term int) bool {
 	for peer := 0; peer < len(rf.peers); peer++ {
 		if peer == rf.me {
 			// Don't forget to update Leader's matchIndex
-			rf.matchIndex[peer] = len(rf.log) - 1
-			rf.nextIndex[peer] = len(rf.log)
+			rf.matchIndex[peer] = rf.log.size() - 1
+			rf.nextIndex[peer] = rf.log.size()
 			continue
 		}
 
 		//获取peer中日志的试探点
 		prevIdx := rf.nextIndex[peer] - 1
-		prevTerm := rf.log[prevIdx].Term
+		prevTerm := rf.log.at(prevIdx).Term
 
 		args := &AppendEntriesArgs{
 			Term:         rf.currentTerm,
 			LeaderId:     rf.me,
 			PrevLogIndex: prevIdx,
 			PrevLogTerm:  prevTerm,
-			Entries:      rf.log[prevIdx+1:],
+			Entries:      rf.log.tail(prevIdx + 1),
 			LeaderCommit: rf.commitIndex,
 		}
 		LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, Append, %v", peer, args.String())

@@ -9,7 +9,7 @@ func (rf *Raft) applicationTicker() {
 		//当其他函数通过applyCond调用当前Ticker时,将执行同步日志传入
 		entries := make([]LogEntry, 0)
 		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-			entries = append(entries, rf.log[i])
+			entries = append(entries, rf.log.at(i))
 		}
 
 		rf.mu.Unlock()
@@ -20,6 +20,7 @@ func (rf *Raft) applicationTicker() {
 				CommandValid: entry.CommandValid,
 				Command:      entry.Command,
 				CommandIndex: rf.lastApplied + 1 + i, //必须严谨
+
 			}
 		}
 
