@@ -80,14 +80,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	//只要任期对齐之后，之后日志对不上导致心跳不正常，也要让选举时钟重置。保证提前执行的return也要执行选举时钟重置
-	defer rf.resetElectionTimerLocked()
 	//任期高，主动让自己变回去
 	if args.Term >= rf.currentTerm {
 		rf.becomeFollowerLocked(args.Term)
 		// LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Append Heart", args.LeaderId) //加入日志之后还需要做日志的比对
 	}
-
-	//如果是日志原因拒绝心跳，就输出一些日志
+	//如果是日志原因拒绝心跳，就输出一些日志,并重置选举时钟
+	defer rf.resetElectionTimerLocked()
 	defer func() {
 		if !reply.Success {
 			LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Follower Conflict: [%d]T%d", args.LeaderId, reply.ConfilictIndex, reply.ConfilictTerm)
@@ -99,12 +98,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//这里理解了，大概是原log小于当试探点时，中间空缺的部分需要重新下放试探点，如果直接运行rf.log[args.PrevLogIndex]会越界。
 	//这里俩段可以写在一起，但是保证调试看着舒服，就不用and直接连接逻辑了
 	if args.PrevLogIndex >= len(rf.log) {
-		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,follower log too short, Len:%d<=Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
 		//然后等待心跳逻辑重新发送更低的试探点
 		//如果探测点大于当前，直接给当前日志长度
 		reply.ConfilictIndex = len(rf.log)
 		reply.ConfilictTerm = InvalidTerm
-		rf.resetElectionTimerLocked()
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,follower log too short, Len:%d<=Prev:%d", args.LeaderId, len(rf.log), args.PrevLogIndex)
+		// rf.resetElectionTimerLocked()
 		return
 	}
 
@@ -112,7 +111,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//在这种情况下，Follower 会拒绝接受 Leader 发送的日志，并打印相应的日志以及进行必要的处理
 	//append日志需要保证append之前的日志是正确的
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,Prev log not match [%d]:T%d!=T%d", args.LeaderId, args.PrevLogIndex, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
 		//然后等待心跳逻辑重新发送更低的试探点
 
 		//这段逻辑应该也能用，这里是这个任期第一个日志-1
@@ -126,6 +124,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		//如果不是，则找到日志错误任期的第一份日志的index进行比对
 		reply.ConfilictTerm = rf.log[args.PrevLogIndex].Term
 		reply.ConfilictIndex = rf.firstLogFor(reply.ConfilictTerm)
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Reject log,Prev log not match [%d]:T%d!=T%d", args.LeaderId, args.PrevLogIndex, rf.log[args.PrevLogIndex].Term, args.PrevLogTerm)
 		return
 	}
 
