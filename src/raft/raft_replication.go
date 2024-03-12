@@ -156,7 +156,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 }
 
 // 获取日志的主要匹配值
-func (rf *Raft) getmajorityMatchedLocked() int {
+func (rf *Raft) getmajorityIndexLocked() int {
 	tmpIndex := make([]int, len(rf.peers))
 	copy(tmpIndex, rf.matchIndex)
 	//此处有疑问sort.Ints(tmpIndex)不能直接用吗
@@ -235,8 +235,8 @@ func (rf *Raft) startReplication(term int) bool {
 
 		//update the commitIndex
 		//主要匹配通过对匹配到的日志取中位数得到的进度进行应用
-		majorityMatched := rf.getmajorityMatchedLocked()
-		if majorityMatched > rf.commitIndex {
+		majorityMatched := rf.getmajorityIndexLocked()
+		if majorityMatched > rf.commitIndex && rf.log[majorityMatched].Term == rf.currentTerm {
 			LOG(rf.me, rf.currentTerm, DApply, "Leader update the commit index %d->%d", rf.commitIndex, majorityMatched)
 			rf.commitIndex = majorityMatched
 			rf.applyCond.Signal()

@@ -172,6 +172,8 @@ func (rf *Raft) becomeLeaderLocked() {
 		//设定所有其他peer和leader还没匹配过日志
 		rf.matchIndex[peer] = 0
 	}
+	//优化，成为leader之后迅速提交一个no-op日志
+	// rf.Start(-1) //这里直接这样写会出问题，还需要研究研究
 }
 
 // return currentTerm and whether this server
