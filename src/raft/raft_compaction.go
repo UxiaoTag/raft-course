@@ -2,6 +2,27 @@ package raft
 
 import "fmt"
 
+// the service says it has created a snapshot that has
+// all info up to and including index. this means the
+// service no longer needs the log through (and including)
+// that index. Raft should now trim its log as much as possible.
+func (rf *Raft) Snapshot(index int, snapshot []byte) {
+	// Your code here (PartD).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	LOG(rf.me, rf.currentTerm, DSnap, "Snap on %d", index)
+	if index > rf.commitIndex {
+		LOG(rf.me, rf.currentTerm, DError, "can't snapshot no commit log")
+		return
+	}
+	if index <= rf.log.snapLastIdx {
+		LOG(rf.me, rf.currentTerm, DError, "%d<=%d no need", index, rf.log.snapLastIdx)
+		return
+	}
+	rf.log.doSnapshot(index, snapshot)
+	rf.persistLocked()
+}
+
 type InstallSnapshotArgs struct {
 	Term     int
 	LeaderId int
@@ -29,27 +50,6 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 	return ok
 }
 
-// the service says it has created a snapshot that has
-// all info up to and including index. this means the
-// service no longer needs the log through (and including)
-// that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (PartD).
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	LOG(rf.me, rf.currentTerm, DSnap, "Snap on %d", index)
-	if index > rf.commitIndex {
-		LOG(rf.me, rf.currentTerm, DError, "can't snapshot no commit log")
-		return
-	}
-	if index <= rf.log.snapLastIdx {
-		LOG(rf.me, rf.currentTerm, DError, "%d<=%d no need", index, rf.log.snapLastIdx)
-		return
-	}
-	rf.log.doSnapshot(index, snapshot)
-	rf.persistLocked()
-}
-
 //类似askVoteFromPeer,installSnapshot发送处理函数
 func (rf *Raft) installOnPeer(peer, term int, args *InstallSnapshotArgs) {
 	reply := &InstallSnapshotReply{}
@@ -66,12 +66,14 @@ func (rf *Raft) installOnPeer(peer, term int, args *InstallSnapshotArgs) {
 		rf.becomeFollowerLocked(reply.Term)
 		return
 	}
-	// if rf.contextLostLocked(Leader, term) {
-	// 	return
-	// }
+	//check context lost
+	if rf.contextLostLocked(Leader, term) {
+		LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Context Lost, T%d:Leader->T%d:%s", peer, term, rf.currentTerm, rf.role)
+		return
+	}
 	if args.LastIncludedIndex > rf.matchIndex[peer] {
 		rf.matchIndex[peer] = args.LastIncludedIndex
-		rf.nextIndex[peer] = args.LastIncludedIndex + 1
+		rf.nextIndex[peer] = rf.matchIndex[peer] + 1
 	}
 }
 
@@ -81,18 +83,18 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	defer rf.mu.Unlock()
 	LOG(rf.me, rf.currentTerm, DDebug, "<- S%d, RecvSnap, Args=%v", args.LeaderId, args.String())
 	reply.Term = rf.currentTerm
-	//收到比自己任期小的，拒绝处理
-	if args.Term < reply.Term {
+	//收到比自己任期小的，拒绝处理,原来用的是reply.term,好像都能用
+	if args.Term < rf.currentTerm {
 		LOG(rf.me, rf.currentTerm, DSnap, "<- S%d, Reject Snap, Higher Term, T%d>T%d", args.LeaderId, rf.currentTerm, args.Term)
 		return
 	}
-	if args.Term > reply.Term {
-		//这里不太能理解，这里如果不填会不会出别的问题
+	if args.Term >= rf.currentTerm {
+		//这里不太能理解，这里如果不填会不会出别的问题,=是处理对方也是候选人用的
 		rf.becomeFollowerLocked(args.Term)
 	}
 	//如果你快照的点已经大于原本了，你也要拒绝处理
 	if rf.log.snapLastIdx >= args.LastIncludedIndex {
-		LOG(rf.me, rf.currentTerm, DSnap, "<- S%d, Reject Snap, Already installed, Last: %d>=%d", args.LeaderId, rf.log.snapLastIdx, args.LastIncludedIndex)
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Higher term, T%d<T%d", args.LeaderId, args.Term, rf.currentTerm)
 		return
 	}
 	// install the snapshot

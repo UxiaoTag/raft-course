@@ -23,7 +23,7 @@ func NewLog(snapshotlastIndex int, snapshotlastTerm int, snapshot []byte, entrie
 		snapLastTerm: snapshotlastTerm,
 		snapshot:     snapshot,
 	}
-	rl.tailLog = make([]LogEntry, 0, 1+len(entries))
+	// rl.tailLog = make([]LogEntry, 0, 1+len(entries))
 	rl.tailLog = append(rl.tailLog, LogEntry{
 		Term: snapshotlastTerm,
 	})
@@ -45,10 +45,6 @@ func (rl *RaftLog) readPersist(d *labgob.LabDecoder) error {
 		return fmt.Errorf("decode last include term failed")
 	}
 	rl.snapLastTerm = snapLastTerm
-	// if err := d.Decode(&snapshot); err != nil {
-	// 	return fmt.Errorf("decode last include snapshot failed")
-	// }
-	// rl.snapshot = snapshot
 	if err := d.Decode(&log); err != nil {
 		return fmt.Errorf("decode tail log failed")
 	}
@@ -73,6 +69,7 @@ func (rl *RaftLog) size() int {
 // 下标转换，到了截断点，就当截断点是0
 // index convertion
 func (rl *RaftLog) idx(logicIdx int) int {
+	// if the logicIdx fall beyond [snapLastIdx, size()-1]
 	if logicIdx < rl.snapLastIdx || logicIdx >= rl.size() {
 		panic(fmt.Sprintf("%d is out of [%d, %d]", logicIdx, rl.snapLastIdx+1, rl.size()-1))
 	}
@@ -104,9 +101,9 @@ func (rl *RaftLog) firstForTerm(Term int) int {
 // use for debug
 func (rl *RaftLog) String() string {
 	var terms string
-	prevTerm := rl.at(0).Term
-	prevStart := 0
-	for i := 0; i < rl.size(); i++ {
+	prevTerm := rl.snapLastTerm
+	prevStart := rl.snapLastIdx //这里能用0我真tm天才
+	for i := prevStart; i < rl.size(); i++ {
 		if rl.at(i).Term != prevTerm {
 			terms += fmt.Sprintf(" [%d, %d]T%d;", prevStart, rl.snapLastIdx+i-1, prevTerm)
 			prevTerm = rl.at(i).Term
@@ -147,7 +144,12 @@ func (rl *RaftLog) tail(startIdx int) []LogEntry {
 
 // leader used
 func (rl *RaftLog) doSnapshot(index int, snapshot []byte) {
+	//当你做快照小于你本来的快照点，没必要做
+	if index <= rl.snapLastIdx {
+		return
+	}
 	idx := rl.idx(index)
+
 	rl.snapLastTerm = rl.tailLog[idx].Term
 	//这里记录的是传入的index
 	rl.snapLastIdx = index

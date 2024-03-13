@@ -34,6 +34,7 @@ func (rf *Raft) persistLocked() {
 	rf.log.Persist(e)
 	raftState := w.Bytes()
 	rf.persister.Save(raftState, rf.log.snapshot)
+	LOG(rf.me, rf.currentTerm, DPersist, "Persist: %v", rf.stateString())
 }
 
 // restore previously persisted state.
@@ -75,6 +76,12 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// rf.log.readPersist(d)
 
+	//忘记读持久化snapshot
+	rf.log.snapshot = rf.persister.snapshot
+	if rf.log.snapLastIdx > rf.commitIndex {
+		rf.commitIndex = rf.log.snapLastIdx
+		rf.lastApplied = rf.log.snapLastIdx
+	}
 	LOG(rf.me, rf.currentTerm, DPersist, "Read Persist %v", rf.stateString())
 }
 

@@ -68,8 +68,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// LOG(rf.me, rf.currentTerm, DLog2, "<- S%d,Append Heart", args.LeaderId) //加入日志之后还需要做日志的比对
 	}
 	//如果是日志原因拒绝心跳，就输出一些日志,并重置选举时钟
-	defer rf.resetElectionTimerLocked()
 	defer func() {
+		rf.resetElectionTimerLocked()
 		if !reply.Success {
 			LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Follower Conflict: [%d]T%d", args.LeaderId, reply.ConfilictIndex, reply.ConfilictTerm)
 			LOG(rf.me, rf.currentTerm, DDebug, "Follower log=%v", rf.log.String())
@@ -128,7 +128,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 
 	//清空选举时钟
-	rf.resetElectionTimerLocked()
+	// rf.resetElectionTimerLocked()
 
 }
 
@@ -248,7 +248,7 @@ func (rf *Raft) startReplication(term int) bool {
 
 		//获取peer中日志的试探点
 		prevIdx := rf.nextIndex[peer] - 1
-		prevTerm := rf.log.at(prevIdx).Term //这里出现的读取panic: 1 is out of [10, 15]
+		// prevTerm := rf.log.at(prevIdx).Term //这里出现的读取panic: 1 is out of [10, 15]
 
 		//如果目前匹配点小于快照点，让他把之前的快照做了
 		if prevIdx < rf.log.snapLastIdx {
@@ -263,7 +263,7 @@ func (rf *Raft) startReplication(term int) bool {
 			go rf.installOnPeer(peer, term, args)
 			continue
 		}
-
+		prevTerm := rf.log.at(prevIdx).Term //如果做快照就不读取prevTerm
 		args := &AppendEntriesArgs{
 			Term:         rf.currentTerm,
 			LeaderId:     rf.me,

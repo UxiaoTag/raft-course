@@ -10,6 +10,10 @@ func (rf *Raft) applicationTicker() {
 		entries := make([]LogEntry, 0)
 		snapPendingInstall := rf.snapPending
 		if !snapPendingInstall {
+			//如果当前日志提交进度小于快照进度，让进度直接飞到快照进度
+			if rf.lastApplied < rf.log.snapLastIdx {
+				rf.lastApplied = rf.log.snapLastIdx
+			}
 			start := rf.lastApplied + 1
 			end := rf.commitIndex
 			if end > rf.log.size()-1 {
