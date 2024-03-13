@@ -94,13 +94,15 @@ type Raft struct {
 	applyCond   *sync.Cond
 	applyCh     chan ApplyMsg //此处有疑问
 
-	//这里准备要该成RaftLog
 	log *RaftLog //log in Peer's local
 
 	//used in Leader
 	//匹配点视图
 	nextIndex  []int //for each server, index of the next log entryto send to that server (initialized to leaderlast log index + 1)
 	matchIndex []int //for each server, index of highest log entryknown to be replicated on server(initialized to 0,increases monotonically)
+
+	//用于apply里面的标记变量，如果这个变量是true说明apply的是snaphot
+	snapPending bool
 }
 
 func (rf *Raft) becomeFollowerLocked(term int) {
@@ -180,23 +182,6 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	return rf.currentTerm, rf.role == Leader
-}
-
-// the service says it has created a snapshot that has
-// all info up to and including index. this means the
-// service no longer needs the log through (and including)
-// that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (PartD).
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	LOG(rf.me, rf.currentTerm, DSnap, "Snap on %d", index)
-	if index > rf.commitIndex {
-		LOG(rf.me, rf.currentTerm, DError, "can't snapshot no commit log")
-		return
-	}
-	rf.log.doSnapshot(index, snapshot)
-	rf.persistLocked()
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -297,6 +282,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.lastApplied = 0
 	rf.applyCond = sync.NewCond(&rf.mu)
 	rf.applyCh = applyCh
+	rf.snapPending = false
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

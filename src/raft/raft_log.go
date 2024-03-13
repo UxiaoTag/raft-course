@@ -81,6 +81,9 @@ func (rl *RaftLog) idx(logicIdx int) int {
 
 // 获取日志
 func (rl *RaftLog) at(logicIdx int) LogEntry {
+	// if logicIdx > rl.size()-1 {
+	// 	return error
+	// }
 	return rl.tailLog[rl.idx(logicIdx)]
 }
 
@@ -142,6 +145,7 @@ func (rl *RaftLog) tail(startIdx int) []LogEntry {
 	return rl.tailLog[rl.idx(startIdx):]
 }
 
+// leader used
 func (rl *RaftLog) doSnapshot(index int, snapshot []byte) {
 	idx := rl.idx(index)
 	rl.snapLastTerm = rl.tailLog[idx].Term
@@ -155,5 +159,21 @@ func (rl *RaftLog) doSnapshot(index int, snapshot []byte) {
 		Term: rl.snapLastTerm,
 	})
 	newlog = append(newlog, rl.tailLog[idx+1:]...)
+	rl.tailLog = newlog
+}
+
+// install snaphot from Leader to follower
+func (rl *RaftLog) InstallSnapshot(index, term int, snapshot []byte) {
+	// idx := rl.idx(index)
+	rl.snapLastTerm = term
+	rl.snapLastIdx = index
+	rl.snapshot = snapshot
+
+	//make new log
+	newlog := make([]LogEntry, 0, rl.size()-rl.snapLastIdx)
+	newlog = append(newlog, LogEntry{
+		Term: rl.snapLastTerm,
+	})
+	// newlog = append(newlog, rl.tailLog[idx+1:]...)
 	rl.tailLog = newlog
 }

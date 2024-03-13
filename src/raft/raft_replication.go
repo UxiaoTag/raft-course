@@ -195,8 +195,14 @@ func (rf *Raft) startReplication(term int) bool {
 			if rf.nextIndex[peer] > prevNext {
 				rf.nextIndex[peer] = prevNext
 			}
-
-			//优化前
+			nextprevIdx := rf.nextIndex[peer] - 1
+			nextprevTerm := InvalidTerm
+			if nextprevIdx >= rf.log.snapLastIdx {
+				nextprevTerm = rf.log.at(nextprevIdx).Term
+			}
+			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%d", peer, args.PrevLogIndex, args.PrevLogTerm, nextprevIdx, nextprevTerm)
+			LOG(rf.me, rf.currentTerm, DDebug, "Leader log=%v", rf.log.String())
+			return //优化前
 			// // 考虑过rf.nextIndex[peer]=args.PrevLogIndex--，但是一个个点试探太慢了
 			// idx := rf.nextIndex[peer] - 1
 			// term := rf.log[idx].Term
@@ -206,9 +212,7 @@ func (rf *Raft) startReplication(term int) bool {
 			// }
 			// //这里的逻辑时每次间隔一个任期进行日志获取，每次下探一个任期。
 			// rf.nextIndex[peer] = idx + 1
-			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%d", peer, args.PrevLogIndex, rf.log.at(args.PrevLogIndex).Term, rf.nextIndex[peer]-1, rf.log.at(rf.nextIndex[peer]-1).Term)
-			LOG(rf.me, rf.currentTerm, DDebug, "Leader log=%v", rf.log.String())
-			return
+
 		}
 
 		// reply.Success log appended, update match/next index
@@ -244,7 +248,21 @@ func (rf *Raft) startReplication(term int) bool {
 
 		//获取peer中日志的试探点
 		prevIdx := rf.nextIndex[peer] - 1
-		prevTerm := rf.log.at(prevIdx).Term
+		prevTerm := rf.log.at(prevIdx).Term //这里出现的读取panic: 1 is out of [10, 15]
+
+		//如果目前匹配点小于快照点，让他把之前的快照做了
+		if prevIdx < rf.log.snapLastIdx {
+			args := &InstallSnapshotArgs{
+				Term:              rf.currentTerm,
+				LeaderId:          rf.me,
+				LastIncludedIndex: rf.log.snapLastIdx,
+				LastIncludedTerm:  rf.log.snapLastTerm,
+				Snaphot:           rf.log.snapshot,
+			}
+			LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, InstallSnap, Args=%v", peer, args.String())
+			go rf.installOnPeer(peer, term, args)
+			continue
+		}
 
 		args := &AppendEntriesArgs{
 			Term:         rf.currentTerm,

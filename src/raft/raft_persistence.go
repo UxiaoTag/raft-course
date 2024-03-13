@@ -33,7 +33,7 @@ func (rf *Raft) persistLocked() {
 	// e.Encode(rf.log)
 	rf.log.Persist(e)
 	raftState := w.Bytes()
-	rf.persister.Save(raftState, nil)
+	rf.persister.Save(raftState, rf.log.snapshot)
 }
 
 // restore previously persisted state.
