@@ -26,7 +26,7 @@ func (rf *Raft) applicationTicker() {
 		rf.mu.Unlock()
 
 		if !snapPendingInstall {
-			//这段不理解，大概是遍历这些 msgs，进行 apply
+			//这段不理解，大概是遍历这些 msgs，进行 apply，这里日志的应用是增量式的，故需要for读取所有apply然后进行
 			for i, entry := range entries {
 				rf.applyCh <- ApplyMsg{
 					CommandValid: entry.CommandValid,
@@ -36,6 +36,7 @@ func (rf *Raft) applicationTicker() {
 				}
 			}
 		} else {
+			//但是这里是覆盖式的
 			rf.applyCh <- ApplyMsg{
 				SnapshotValid: true,
 				Snapshot:      rf.log.snapshot,

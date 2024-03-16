@@ -197,12 +197,14 @@ func (rf *Raft) startReplication(term int) bool {
 			}
 			nextprevIdx := rf.nextIndex[peer] - 1
 			nextprevTerm := InvalidTerm
+			//保证不会取到快照以下的term导致出错
 			if nextprevIdx >= rf.log.snapLastIdx {
 				nextprevTerm = rf.log.at(nextprevIdx).Term
 			}
 			LOG(rf.me, rf.currentTerm, DLog, "-> S%d, Not matched at Prev=[%d]T%d, Try next Prev=[%d]T%d", peer, args.PrevLogIndex, args.PrevLogTerm, nextprevIdx, nextprevTerm)
 			LOG(rf.me, rf.currentTerm, DDebug, "Leader log=%v", rf.log.String())
-			return //优化前
+			return
+			//优化前
 			// // 考虑过rf.nextIndex[peer]=args.PrevLogIndex--，但是一个个点试探太慢了
 			// idx := rf.nextIndex[peer] - 1
 			// term := rf.log[idx].Term
