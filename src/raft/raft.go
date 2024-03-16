@@ -199,9 +199,6 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock() //出现data race请先检查锁有没有上好
-	// index := -1
-	// term := -1
-	// isLeader := true
 
 	// Your code here (PartB).
 	if rf.role != Leader {

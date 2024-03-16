@@ -4,25 +4,10 @@ import (
 	"course/labgob"
 	"course/labrpc"
 	"course/raft"
-	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 )
-
-const Debug = false
-
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
-
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
-}
 
 type KVServer struct {
 	mu      sync.Mutex
@@ -34,14 +19,70 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	lastApplied          int
+	MemoryKVStateMachine *MemoryKVStateMachine
+	notifyCh             map[int]chan *OpReply
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	index, _, isLeader := kv.rf.Start(Op{
+		Key: args.Key,
+		// Value: reply.Value,
+		OpType: OpGet,
+	})
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	//等待结果
+	kv.mu.Lock()
+	notifyCh := kv.getNotifyChannel(index)
+	kv.mu.Unlock()
+
+	select {
+	case result := <-notifyCh:
+		reply.Value = result.Value
+		reply.Err = result.Err
+	//该处time.After()返回一个通道，这个通道将在指定的时间后发送一个值（通常是nil），然后关闭。当通道关闭时，select语句中的相应case分支会被执行。所以这句话就是一个计时器
+	case <-time.After(ClientRequsetTimeout):
+		reply.Err = ErrTimeout
+	}
+	//异步删除通知的通道，因为是index产生的，所以通道唯一，用完要删
+	go func() {
+		kv.mu.Lock()
+		kv.removeNotifyChannel(index)
+		kv.mu.Unlock()
+	}()
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	index, _, isLeader := kv.rf.Start(Op{
+		Key:    args.Key,
+		Value:  args.Value,
+		OpType: getOpType(args.Op),
+	})
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	//等待结果
+	kv.mu.Lock()
+	notifyCh := kv.getNotifyChannel(index)
+	kv.mu.Unlock()
+	select {
+	case result := <-notifyCh:
+		reply.Err = result.Err
+	case <-time.After(ClientRequsetTimeout):
+		reply.Err = ErrTimeout
+	}
+	//异步删除这些通道，因为是index产生的，所以通道唯一，用完要删
+	go func() {
+		kv.mu.Lock()
+		kv.removeNotifyChannel(index)
+		kv.mu.Unlock()
+	}()
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -88,8 +129,66 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
+	kv.lastApplied = 0
+	kv.dead = 0
+	kv.MemoryKVStateMachine = NewMemoryKVStateMachine()
 	// You may need initialization code here.
+	go kv.applyTicker()
 
 	return kv
+}
+
+func (kv *KVServer) applyTicker() {
+	for !kv.killed() {
+		select {
+		case message := <-kv.applyCh:
+			if message.CommandValid {
+				kv.mu.Lock()
+				//已经处理就忽略
+				if message.CommandIndex <= kv.lastApplied {
+					kv.mu.Unlock()
+					continue
+				}
+				kv.lastApplied = message.CommandIndex
+
+				//取出用户操作
+				op := message.Command.(Op)
+				//操作应用到状态机
+				OpReply := kv.applyToMemoryKVStateMachine(op)
+
+				//将结果返回到应用
+				if _, IsLeader := kv.rf.GetState(); IsLeader {
+					notifyCh := kv.getNotifyChannel(message.CommandIndex)
+					notifyCh <- OpReply
+				}
+				kv.mu.Unlock()
+			}
+		}
+	}
+}
+
+func (kv *KVServer) applyToMemoryKVStateMachine(op Op) *OpReply {
+	var value string
+	var Err Err
+	switch op.OpType {
+	case OpGet:
+		value, Err = kv.MemoryKVStateMachine.Get(op.Key)
+	case OpPut:
+		Err = kv.MemoryKVStateMachine.Put(op.Key, op.Value)
+	case OpAppend:
+		Err = kv.MemoryKVStateMachine.Append(op.Key, op.Value)
+	}
+	return &OpReply{Value: value, Err: Err}
+}
+
+func (kv *KVServer) getNotifyChannel(index int) chan *OpReply {
+	if _, ok := kv.notifyCh[index]; !ok {
+		kv.notifyCh[index] = make(chan *OpReply, 1)
+	}
+	return kv.notifyCh[index]
+}
+
+// 这个channel是唯一的(由日志的index决定，所以用完要释放)
+func (kv *KVServer) removeNotifyChannel(index int) {
+	delete(kv.notifyCh, index)
 }
