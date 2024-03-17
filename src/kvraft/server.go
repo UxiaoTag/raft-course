@@ -1,9 +1,11 @@
 package kvraft
 
 import (
+	"bytes"
 	"course/labgob"
 	"course/labrpc"
 	"course/raft"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,7 +25,7 @@ type KVServer struct {
 	MemoryKVStateMachine *MemoryKVStateMachine
 	notifyCh             map[int]chan *OpReply
 
-	duplicateTable map[int64]*lastOperationInfo
+	duplicateTable map[int64]lastOperationInfo
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -61,14 +63,14 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 // 如果重复发送过返回true,这里seqId如果<=存储中的info.seqId，说明这条命令是在之前就执行过的。
 func (kv *KVServer) requestDuplicated(clientId, seqId int64) bool {
 	info, ok := kv.duplicateTable[clientId]
-	return ok && seqId <= info.seqId
+	return ok && seqId <= info.SeqId
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 	kv.mu.Lock()
-	if kv.requestDuplicated(args.clientId, args.seqId) {
-		reply.Err = kv.duplicateTable[args.clientId].Reply.Err
+	if kv.requestDuplicated(args.ClientId, args.SeqId) {
+		reply.Err = kv.duplicateTable[args.ClientId].Reply.Err
 		kv.mu.Unlock()
 		return
 	}
@@ -79,8 +81,8 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		Key:      args.Key,
 		Value:    args.Value,
 		OpType:   getOpType(args.Op),
-		clientId: args.clientId,
-		seqId:    args.seqId,
+		ClientId: args.ClientId,
+		SeqId:    args.SeqId,
 	})
 	if !isLeader {
 		reply.Err = ErrWrongLeader
@@ -152,7 +154,11 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.dead = 0
 	kv.MemoryKVStateMachine = NewMemoryKVStateMachine()
 	kv.notifyCh = make(map[int]chan *OpReply)
-	kv.duplicateTable = make(map[int64]*lastOperationInfo)
+	kv.duplicateTable = make(map[int64]lastOperationInfo)
+
+	//read snapshot
+	kv.restoreSnapShot(persister.ReadSnapshot())
+
 	// You may need initialization code here.
 	go kv.applyTicker()
 
@@ -177,8 +183,8 @@ func (kv *KVServer) applyTicker() {
 
 				var OpReply *OpReply
 				//如果该命令不是get且返回过
-				if op.OpType != OpGet && kv.requestDuplicated(op.clientId, op.seqId) {
-					OpReply = kv.duplicateTable[op.clientId].Reply
+				if op.OpType != OpGet && kv.requestDuplicated(op.ClientId, op.SeqId) {
+					OpReply = kv.duplicateTable[op.ClientId].Reply
 				} else {
 					//操作应用到状态机
 					//这里有个究极疑问，就是如果你执行了10条命令并且都apply了，然后你apply了一条seq为1的命令，
@@ -186,8 +192,8 @@ func (kv *KVServer) applyTicker() {
 					//也就是你返回的是10的返回结果，虽然我理解这个最重要的是不执行，且返回估计就是ok，没什么区别但是还是不理解。
 					OpReply = kv.applyToMemoryKVStateMachine(op)
 					if op.OpType != OpGet {
-						kv.duplicateTable[op.clientId] = &lastOperationInfo{
-							seqId: op.seqId,
+						kv.duplicateTable[op.ClientId] = lastOperationInfo{
+							SeqId: op.SeqId,
 							Reply: OpReply,
 						}
 					}
@@ -197,6 +203,16 @@ func (kv *KVServer) applyTicker() {
 					notifyCh := kv.getNotifyChannel(message.CommandIndex)
 					notifyCh <- OpReply
 				}
+
+				//判断是否需要snapshot
+				if kv.maxraftstate != -1 && kv.rf.GetRaftStateSize() >= kv.maxraftstate {
+					kv.makeSnapShot(message.CommandIndex)
+				}
+				kv.mu.Unlock()
+			} else if message.SnapshotValid {
+				kv.mu.Lock()
+				kv.restoreSnapShot(message.Snapshot)
+				kv.lastApplied = message.SnapshotIndex
 				kv.mu.Unlock()
 			}
 		}
@@ -227,4 +243,30 @@ func (kv *KVServer) getNotifyChannel(index int) chan *OpReply {
 // 这个channel是唯一的(由日志的index决定，所以用完要释放)
 func (kv *KVServer) removeNotifyChannel(index int) {
 	delete(kv.notifyCh, index)
+}
+
+func (kv *KVServer) makeSnapShot(index int) {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.MemoryKVStateMachine)
+	e.Encode(kv.duplicateTable)
+	kv.rf.Snapshot(index, w.Bytes())
+}
+
+func (kv *KVServer) restoreSnapShot(snapshot []byte) {
+	if len(snapshot) == 0 {
+		return
+	}
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var MemoryKVStateMachine MemoryKVStateMachine
+	var dupTable map[int64]lastOperationInfo
+	if err := d.Decode(&MemoryKVStateMachine); err != nil {
+		panic(fmt.Sprintf("restore MemoryKVStateMachine Error %v", err))
+	}
+	kv.MemoryKVStateMachine = &MemoryKVStateMachine
+	if err := d.Decode(&dupTable); err != nil {
+		panic(fmt.Sprintf("restore duplicateTable Error %v", err))
+	}
+	kv.duplicateTable = dupTable
 }

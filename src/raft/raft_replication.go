@@ -89,6 +89,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
+	if rf.log.snapLastIdx > args.PrevLogIndex {
+		reply.ConfilictTerm = rf.log.snapLastTerm
+		reply.ConfilictIndex = rf.log.snapLastIdx
+		LOG(rf.me, rf.currentTerm, DLog2, "<- S%d, Reject log, Follower log truncated in %d", args.LeaderId, rf.log.snapLastIdx)
+		return
+	}
+
 	//如果 Follower 的前面的日志与 Leader 发送的日志在相同的位置处的 Term 不一致，这可能表示存在日志冲突或者日志错误的情况。
 	//在这种情况下，Follower 会拒绝接受 Leader 发送的日志，并打印相应的日志以及进行必要的处理
 	//append日志需要保证append之前的日志是正确的

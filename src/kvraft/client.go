@@ -11,8 +11,8 @@ type Clerk struct {
 	// You will have to modify this struct.
 	Leaderid int
 	//确定唯一命令
-	clientId int64
-	seqId    int64
+	ClientId int64
+	SeqId    int64
 }
 
 func nrand() int64 {
@@ -27,8 +27,8 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.servers = servers
 	// You'll have to add code here.
 	ck.Leaderid = 0
-	ck.clientId = nrand()
-	ck.seqId = 0
+	ck.ClientId = nrand()
+	ck.SeqId = 0
 	return ck
 }
 
@@ -46,10 +46,10 @@ func (ck *Clerk) Get(key string) string {
 	args := GetArgs{
 		Key: key,
 	}
-	reply := &GetReply{}
 	//突然看懂了，这里想一直轮询整个servers直到有人回复,而不是只轮询一次
 	// for i := range ck.servers {
 	for {
+		reply := &GetReply{}
 		ok := ck.servers[ck.Leaderid].Call("KVServer.Get", &args, &reply)
 		if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
 			ck.Leaderid = (ck.Leaderid + 1) % len(ck.servers)
@@ -75,17 +75,17 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		Key:      key,
 		Value:    value,
 		Op:       op,
-		clientId: ck.clientId,
-		seqId:    ck.seqId,
+		ClientId: ck.ClientId,
+		SeqId:    ck.SeqId,
 	}
-	reply := PutAppendReply{}
 	for {
+		reply := PutAppendReply{}
 		ok := ck.servers[ck.Leaderid].Call("KVServer.PutAppend", &args, &reply)
 		if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
 			ck.Leaderid = (ck.Leaderid + 1) % len(ck.servers)
 			continue
 		}
-		ck.seqId++
+		ck.SeqId++
 		return
 	}
 }
