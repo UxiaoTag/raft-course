@@ -1,5 +1,7 @@
 package shardctrler
 
+import "time"
+
 //
 // Shard controler: assigns shards to replication groups.
 //
@@ -29,11 +31,13 @@ type Config struct {
 }
 
 const (
-	OK = "OK"
-	// ErrNoKey       = "ErrNoKey"
+	OK             = "OK"
+	ErrNoKey       = "ErrNoKey"
 	ErrWrongLeader = "ErrWrongLeader"
 	ErrTimeout     = "ErrTimeout"
 )
+
+const ClientRequsetTimeout = 500 * time.Millisecond
 
 type Err string
 
@@ -79,4 +83,42 @@ type QueryReply struct {
 	WrongLeader bool
 	Err         Err
 	Config      Config
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	OpType   OpType
+	ClientId int64
+	SeqId    int64
+
+	//use for join
+	Servers map[int][]string // new GID -> servers mappings
+	//use for Leave
+	GIDs []int
+	//use for move
+	Shard int
+	GID   int
+	//use for Query
+	Num int // desired config number
+}
+
+type OpReply struct {
+	Err             Err
+	ControlerConfig Config
+}
+
+type OpType uint8
+
+const (
+	OpQuery OpType = 0
+	OpJoin
+	OpLeave
+	OpMove
+)
+
+type lastOperationInfo struct {
+	SeqId int64
+	Reply *OpReply
 }

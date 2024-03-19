@@ -68,6 +68,7 @@ func (kv *KVServer) requestDuplicated(clientId, seqId int64) bool {
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
+	// Your code here.
 	kv.mu.Lock()
 	if kv.requestDuplicated(args.ClientId, args.SeqId) {
 		reply.Err = kv.duplicateTable[args.ClientId].Reply.Err
@@ -75,7 +76,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	kv.mu.Unlock()
-	// Your code here.
 	//调用raft,请求存储到raft日志并进行同步
 	index, _, isLeader := kv.rf.Start(Op{
 		Key:      args.Key,
