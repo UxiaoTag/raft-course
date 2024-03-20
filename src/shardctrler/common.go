@@ -30,6 +30,13 @@ type Config struct {
 	Groups map[int][]string // gid -> servers[]
 }
 
+//make init Config
+func DefaultConfig() Config {
+	return Config{
+		Groups: make(map[int][]string),
+	}
+}
+
 const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
@@ -112,7 +119,7 @@ type OpReply struct {
 type OpType uint8
 
 const (
-	OpQuery OpType = 0
+	OpQuery OpType = iota
 	OpJoin
 	OpLeave
 	OpMove

@@ -49,7 +49,6 @@ func (ck *Clerk) Query(num int) Config {
 		}
 		return reply.Config
 	}
-	// time.Sleep(100 * time.Millisecond)
 }
 
 func (ck *Clerk) Join(servers map[int][]string) {

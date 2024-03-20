@@ -19,10 +19,10 @@ type ShardCtrler struct {
 
 	configs []Config // indexed by config num
 
-	dead                 int32 // set by Kill()
-	lastApplied          int
-	MemoryKVStateMachine *MemoryKVStateMachine
-	notifyCh             map[int]chan *OpReply
+	dead               int32 // set by Kill()
+	lastApplied        int
+	CtrlerStateMachine *CtrlerStateMachine
+	notifyCh           map[int]chan *OpReply
 
 	duplicateTable map[int64]lastOperationInfo
 }
@@ -39,7 +39,7 @@ func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
 	sc.Command(Op{
 		OpType:   OpJoin,
 		ClientId: args.ClientId,
-		SeqId:    args.ClientId,
+		SeqId:    args.SeqId,
 		Servers:  args.Servers,
 	}, &OpReply)
 	reply.Err = OpReply.Err
@@ -51,7 +51,7 @@ func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
 	sc.Command(Op{
 		OpType:   OpLeave,
 		ClientId: args.ClientId,
-		SeqId:    args.ClientId,
+		SeqId:    args.SeqId,
 		GIDs:     args.GIDs,
 	}, &OpReply)
 	reply.Err = OpReply.Err
@@ -63,7 +63,7 @@ func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
 	sc.Command(Op{
 		OpType:   OpMove,
 		ClientId: args.ClientId,
-		SeqId:    args.ClientId,
+		SeqId:    args.SeqId,
 		Shard:    args.Shard,
 		GID:      args.GID,
 	}, &OpReply)
@@ -157,7 +157,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 
 	sc.lastApplied = 0
 	sc.dead = 0
-	sc.MemoryKVStateMachine = NewMemoryKVStateMachine()
+	sc.CtrlerStateMachine = NewCtrlerStateMachine()
 	sc.notifyCh = make(map[int]chan *OpReply)
 	sc.duplicateTable = make(map[int64]lastOperationInfo)
 
@@ -189,10 +189,10 @@ func (sc *ShardCtrler) applyTicker() {
 					OpReply = sc.duplicateTable[op.ClientId].Reply
 				} else {
 					//操作应用到状态机
-					//这里有个究极疑问，就是如果你执行了10条命令并且都apply了，然后你apply了一条seq为1的命令，
+					//这里有个究极疑问，就是如果你执行了seq为10的命令并且都apply了，然后你apply了一条seq为1的命令，
 					//你肯定是返回kv.duplicateTable[op.clientId].Reply，但是此时你的kv.duplicateTable[op.clientId].seqId其实应该==10，
 					//也就是你返回的是10的返回结果，虽然我理解这个最重要的是不执行，且返回估计就是ok，没什么区别但是还是不理解。
-					OpReply = sc.applyToMemoryKVStateMachine(op)
+					OpReply = sc.applyToCtrlerStateMachine(op)
 					if op.OpType != OpQuery {
 						sc.duplicateTable[op.ClientId] = lastOperationInfo{
 							SeqId: op.SeqId,
@@ -212,19 +212,23 @@ func (sc *ShardCtrler) applyTicker() {
 	}
 }
 
-// TODO
-func (sc *ShardCtrler) applyToMemoryKVStateMachine(op Op) *OpReply {
-	// var value string
-	// var Err Err
-	// switch op.OpType {
-	// case OpGet:
-	// 	value, Err = sc.MemoryKVStateMachine.Get(op.Key)
-	// case OpPut:
-	// 	Err = sc.MemoryKVStateMachine.Put(op.Key, op.Value)
-	// case OpAppend:
-	// 	Err = sc.MemoryKVStateMachine.Append(op.Key, op.Value)
-	// }
-	return nil
+func (sc *ShardCtrler) applyToCtrlerStateMachine(op Op) *OpReply {
+	var cfg Config
+	var Err Err
+	switch op.OpType {
+	case OpJoin:
+		Err = sc.CtrlerStateMachine.Join(op.Servers)
+	case OpLeave:
+		Err = sc.CtrlerStateMachine.Leave(op.GIDs)
+	case OpMove:
+		Err = sc.CtrlerStateMachine.Move(op.Shard, op.GID)
+	case OpQuery:
+		cfg, Err = sc.CtrlerStateMachine.Query(op.Num)
+	default:
+		panic("unknow op!!")
+	}
+
+	return &OpReply{Err: Err, ControlerConfig: cfg}
 }
 
 func (sc *ShardCtrler) getNotifyChannel(index int) chan *OpReply {
