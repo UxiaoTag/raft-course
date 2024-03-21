@@ -38,6 +38,9 @@ func (kv *ShardKV) handleConfigChangeMessage(command RaftCommand) *OpReply {
 	case ConfigChange:
 		config := command.Data.(shardctrler.Config)
 		return kv.applyNewConfig(config)
+	case ShardMingration:
+		shardData := command.Data.(ShardOperationReply)
+		return kv.applyShardMingration(&shardData)
 	default:
 		panic("unknow config change type")
 	}
@@ -47,18 +50,50 @@ func (kv *ShardKV) handleConfigChangeMessage(command RaftCommand) *OpReply {
 func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
 	if kv.currentConfig.Num+1 == newConfig.Num {
 		for i := 0; i < shardctrler.NShards; i++ {
-			//处理分段离开
-			if kv.currentConfig.Shards[i] == kv.gid && newConfig.Shards[i] != kv.gid {
-				//需要迁移出去TODO
-				delete(kv.shards, i)
-			}
 			//处理分段进来
 			if kv.currentConfig.Shards[i] != kv.gid && newConfig.Shards[i] == kv.gid {
 				// 需要迁移进来TODO
+				gid := kv.currentConfig.Shards[i]
+				if gid != 0 {
+					kv.shards[i].Status = MoveIn
+				}
 			}
+			//处理分段离开
+			if kv.currentConfig.Shards[i] == kv.gid && newConfig.Shards[i] != kv.gid {
+				//需要迁移出去TODO
+			}
+
 		}
+		kv.prevConfig = kv.currentConfig
 		kv.currentConfig = newConfig
 		return &OpReply{Err: OK}
+	}
+	return &OpReply{Err: ErrWrongConfig}
+}
+
+func (kv *ShardKV) applyShardMingration(reply *ShardOperationReply) *OpReply {
+	if reply.ConfigNum == kv.currentConfig.Num {
+		for shardId, shardData := range reply.ShardData {
+			shard := kv.shards[shardId]
+			//将数据存储到当前grop对应的shard中
+			if shard.Status == MoveIn {
+				// kv.shards[shardId].KV = shardData
+				for k, v := range shardData {
+					shard.KV[k] = v
+				}
+				shard.Status = GC
+			} else {
+				break
+			}
+		}
+
+		//拷贝去重表的数据
+		for clientId, table := range reply.duplicateTable {
+			localtable, ok := kv.duplicateTable[clientId]
+			if !ok || localtable.SeqId < table.SeqId {
+				kv.duplicateTable[clientId] = table
+			}
+		}
 	}
 	return &OpReply{Err: ErrWrongConfig}
 }

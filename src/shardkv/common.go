@@ -23,6 +23,7 @@ const (
 	ErrWrongLeader = "ErrWrongLeader"
 	ErrTimeout     = "ErrTimeout"
 	ErrWrongConfig = "ErrWrongConfig"
+	ErrNotReadly   = "ErrNotReadly"
 )
 
 type Err string
@@ -57,6 +58,7 @@ type GetReply struct {
 const (
 	ClientRequsetTimeout = 500 * time.Millisecond
 	FetchConfigIntval    = 100 * time.Millisecond
+	shardMigrationIntval = 50 * time.Millisecond
 )
 const Debug = false
 
@@ -110,17 +112,49 @@ type lastOperationInfo struct {
 	Reply *OpReply
 }
 
+func (op *lastOperationInfo) copyData() lastOperationInfo {
+	return lastOperationInfo{
+		SeqId: op.SeqId,
+		Reply: &OpReply{
+			Err:   op.Reply.Err,
+			Value: op.Reply.Value,
+		},
+	}
+}
+
 // 这里改造一下，将raft log请求分成配置变更和用户操作
 type RaftOpType uint8
 
 const (
 	ClientOpertion RaftOpType = iota
 	ConfigChange
+	ShardMingration
 )
 
 type RaftCommand struct {
 	CmdType RaftOpType
 	Data    interface{}
+}
+
+type ShardStatus uint8
+
+const (
+	Normal ShardStatus = iota
+	MoveIn
+	MoveOut
+	GC
+)
+
+type ShardOperationArgs struct {
+	ConfigNum int
+	ShardIds  []int
+}
+
+type ShardOperationReply struct {
+	Err            Err
+	ConfigNum      int
+	ShardData      map[int]map[string]string
+	duplicateTable map[int64]lastOperationInfo
 }
 
 func (kv *ShardKV) matchGroup(Key string) bool {
