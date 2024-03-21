@@ -177,7 +177,12 @@ func (kv *ShardKV) killed() bool {
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
+	//如果你对rpc发送请求了其他结构体，需要在这里注册
 	labgob.Register(Op{})
+	labgob.Register(RaftCommand{})
+	labgob.Register(shardctrler.Config{})
+	labgob.Register(ShardOperationArgs{})
+	labgob.Register(ShardOperationReply{})
 
 	kv := new(ShardKV)
 	kv.me = me
@@ -245,17 +250,26 @@ func (kv *ShardKV) makeSnapShot(index int) {
 	e := labgob.NewEncoder(w)
 	e.Encode(kv.shards)
 	e.Encode(kv.duplicateTable)
+	e.Encode(kv.currentConfig)
+	e.Encode(kv.prevConfig)
 	kv.rf.Snapshot(index, w.Bytes())
 }
 
 func (kv *ShardKV) restoreSnapShot(snapshot []byte) {
 	if len(snapshot) == 0 {
+		for i := 0; i < shardctrler.NShards; i++ {
+			if _, ok := kv.shards[i]; !ok {
+				kv.shards[i] = NewMemoryKVStateMachine()
+			}
+		}
 		return
 	}
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
 	var shards map[int]*MemoryKVStateMachine
 	var dupTable map[int64]lastOperationInfo
+	var currentConfig shardctrler.Config
+	var prevConfig shardctrler.Config
 	if err := d.Decode(&shards); err != nil {
 		panic(fmt.Sprintf("restore MemoryKVStateMachine Error %v", err))
 	}
@@ -264,4 +278,12 @@ func (kv *ShardKV) restoreSnapShot(snapshot []byte) {
 		panic(fmt.Sprintf("restore duplicateTable Error %v", err))
 	}
 	kv.duplicateTable = dupTable
+	if err := d.Decode(&currentConfig); err != nil {
+		panic(fmt.Sprintf("restore currentConfig Error %v", err))
+	}
+	kv.currentConfig = currentConfig
+	if err := d.Decode(&prevConfig); err != nil {
+		panic(fmt.Sprintf("restore prevConfig Error %v", err))
+	}
+	kv.prevConfig = prevConfig
 }

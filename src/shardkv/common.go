@@ -161,7 +161,8 @@ type ShardOperationReply struct {
 
 func (kv *ShardKV) matchGroup(Key string) bool {
 	shard := key2shard(Key)
-	return kv.currentConfig.Shards[shard] == kv.gid
+	ShardStatus := kv.shards[shard].Status
+	return kv.currentConfig.Shards[shard] == kv.gid && (ShardStatus == Normal || ShardStatus == GC)
 }
 
 // which shard is a key in?

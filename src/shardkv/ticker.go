@@ -24,23 +24,7 @@ func (kv *ShardKV) applyTicker() {
 				var OpReply *OpReply
 				if command.CmdType == ClientOpertion {
 					op := command.Data.(Op)
-
-					//如果该命令不是get且返回过
-					if op.OpType != OpGet && kv.requestDuplicated(op.ClientId, op.SeqId) {
-						OpReply = kv.duplicateTable[op.ClientId].Reply
-					} else {
-						//操作应用到状态机
-						//这里有个究极疑问，就是如果你在客户端1104执行了10条命令并且都apply了，然后你突然拿到需要apply一条seq为1的命令，
-						//你肯定是返回kv.duplicateTable[op.clientId].Reply，但是此时你的kv.duplicateTable[op.clientId].seqId其实应该==10，
-						//也就是你返回的是10的返回结果，虽然我理解这个最重要的是不执行，且返回估计就是ok，没什么区别但是还是不理解。
-						OpReply = kv.applyToMemoryKVStateMachine(op)
-						if op.OpType != OpGet {
-							kv.duplicateTable[op.ClientId] = lastOperationInfo{
-								SeqId: op.SeqId,
-								Reply: OpReply,
-							}
-						}
-					}
+					OpReply = kv.applyClientOp(op)
 				} else {
 					// config := command.Data.(shardctrler.Config)
 					OpReply = kv.handleConfigChangeMessage(command)
@@ -67,20 +51,33 @@ func (kv *ShardKV) applyTicker() {
 	}
 }
 
-// TODO
+// 获取当前配置
 func (kv *ShardKV) fetchConfigTicker() {
 	for !kv.killed() {
 		if _, isLeader := kv.rf.GetState(); isLeader {
+
+			needFetch := true
 			kv.mu.Lock()
-			//每次下一份配置
-			NewConfig := kv.mck.Query(kv.currentConfig.Num + 1)
-			//传入raft模块进行同步TODO
-			kv.ConfigCommand(RaftCommand{
-				CmdType: ConfigChange,
-				Data:    NewConfig,
-			}, &OpReply{})
-			kv.currentConfig = NewConfig
+			//每次处理一份请求,如果有shard状态是非normal,则说明配置还在进行变更
+			for _, shard := range kv.shards {
+				if shard.Status != Normal {
+					needFetch = false
+					break
+				}
+			}
+			currentNum := kv.currentConfig.Num
 			kv.mu.Unlock()
+
+			if needFetch {
+				NewConfig := kv.mck.Query(currentNum + 1)
+				if NewConfig.Num == currentNum+1 {
+					//传入raft模块进行同步,如果configNUM一致则不需要修改
+					kv.ConfigCommand(RaftCommand{
+						CmdType: ConfigChange,
+						Data:    NewConfig,
+					}, &OpReply{})
+				}
+			}
 			time.Sleep(FetchConfigIntval)
 		}
 	}
@@ -213,4 +210,28 @@ func (kv *ShardKV) DeleteShardData(args *ShardOperationArgs, reply *ShardOperati
 	kv.ConfigCommand(RaftCommand{ShardGC, *args}, &opReply)
 
 	reply.Err = opReply.Err
+}
+
+func (kv *ShardKV) applyClientOp(op Op) *OpReply {
+	if kv.matchGroup(op.Key) {
+		var Reply *OpReply
+		//如果该命令不是get且返回过
+		if op.OpType != OpGet && kv.requestDuplicated(op.ClientId, op.SeqId) {
+			Reply = kv.duplicateTable[op.ClientId].Reply
+		} else {
+			//操作应用到状态机
+			//这里有个究极疑问，就是如果你在客户端1104执行了10条命令并且都apply了，然后你突然拿到需要apply一条seq为1的命令，
+			//你肯定是返回kv.duplicateTable[op.clientId].Reply，但是此时你的kv.duplicateTable[op.clientId].seqId其实应该==10，
+			//也就是你返回的是10的返回结果，虽然我理解这个最重要的是不执行，且返回估计就是ok，没什么区别但是还是不理解。
+			Reply = kv.applyToMemoryKVStateMachine(op)
+			if op.OpType != OpGet {
+				kv.duplicateTable[op.ClientId] = lastOperationInfo{
+					SeqId: op.SeqId,
+					Reply: Reply,
+				}
+			}
+		}
+		return Reply
+	}
+	return &OpReply{Err: ErrWrongGroup}
 }
