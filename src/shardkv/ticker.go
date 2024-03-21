@@ -112,8 +112,38 @@ func (kv *ShardKV) shardMigrationTicker() {
 				}(kv.prevConfig.Groups[gid], kv.currentConfig.Num, shardIds)
 			}
 			kv.mu.Unlock()
+			wg.Wait()
 		}
 		time.Sleep(shardMigrationIntval)
+	}
+}
+
+func (kv *ShardKV) shardGCTicker() {
+	for !kv.killed() {
+		if _, isleader := kv.rf.GetState(); isleader {
+			kv.mu.Lock()
+			gidToShards := kv.getShardByStatus(GC)
+			var wg sync.WaitGroup
+			for gid, shardIds := range gidToShards {
+				wg.Add(1)
+				go func(servers []string, ConfigNum int, shardIds []int) {
+					defer wg.Done()
+					shardArgs := ShardOperationArgs{ConfigNum, shardIds}
+					for _, server := range servers {
+						var shardGCReply ShardOperationReply
+						clientEnd := kv.make_end(server)
+						ok := clientEnd.Call("ShardKV.DeleteShardData", &shardArgs, &shardGCReply)
+						if ok && shardGCReply.Err == OK {
+							//这里发送的意思是当你发送给对方并收到GC.OK，则自己修改GC状态
+							kv.ConfigCommand(RaftCommand{ShardGC, shardArgs}, &OpReply{})
+						}
+					}
+				}(kv.prevConfig.Groups[gid], kv.currentConfig.Num, shardIds)
+			}
+			kv.mu.Unlock()
+			wg.Wait()
+		}
+		time.Sleep(shardGCIntval)
 	}
 }
 
@@ -161,4 +191,26 @@ func (kv *ShardKV) GetShardData(args *ShardOperationArgs, reply *ShardOperationR
 	}
 
 	reply.ConfigNum, reply.Err = args.ConfigNum, OK
+}
+
+func (kv *ShardKV) DeleteShardData(args *ShardOperationArgs, reply *ShardOperationReply) {
+	if _, isleader := kv.rf.GetState(); !isleader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	kv.mu.Lock()
+
+	//当前Group的配置不是所需要的
+	if kv.currentConfig.Num > args.ConfigNum {
+		reply.Err = OK
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+
+	var opReply OpReply
+	//下达GC，在applyShardGC中实现
+	kv.ConfigCommand(RaftCommand{ShardGC, *args}, &opReply)
+
+	reply.Err = opReply.Err
 }

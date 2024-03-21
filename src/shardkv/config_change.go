@@ -41,6 +41,9 @@ func (kv *ShardKV) handleConfigChangeMessage(command RaftCommand) *OpReply {
 	case ShardMingration:
 		shardData := command.Data.(ShardOperationReply)
 		return kv.applyShardMingration(&shardData)
+	case ShardGC:
+		shardInfo := command.Data.(ShardOperationArgs)
+		return kv.applyShardGC(&shardInfo)
 	default:
 		panic("unknow config change type")
 	}
@@ -60,7 +63,11 @@ func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
 			}
 			//处理分段离开
 			if kv.currentConfig.Shards[i] == kv.gid && newConfig.Shards[i] != kv.gid {
-				//需要迁移出去TODO
+				//需要迁移出去
+				gid := kv.currentConfig.Shards[i]
+				if gid != 0 {
+					kv.shards[i].Status = MoveOut
+				}
 			}
 
 		}
@@ -96,4 +103,20 @@ func (kv *ShardKV) applyShardMingration(reply *ShardOperationReply) *OpReply {
 		}
 	}
 	return &OpReply{Err: ErrWrongConfig}
+}
+
+func (kv *ShardKV) applyShardGC(shardInfo *ShardOperationArgs) *OpReply {
+	if shardInfo.ConfigNum == kv.currentConfig.Num {
+		for _, shardId := range shardInfo.ShardIds {
+			shard := kv.shards[shardId]
+			if shard.Status == GC {
+				shard.Status = Normal
+			} else if shard.Status == MoveOut {
+				kv.shards[shardId] = NewMemoryKVStateMachine()
+			} else {
+				break
+			}
+		}
+	}
+	return &OpReply{Err: OK}
 }

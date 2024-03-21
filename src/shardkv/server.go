@@ -208,6 +208,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// You may need initialization code here.
 	go kv.applyTicker()
 	go kv.fetchConfigTicker()
+	go kv.shardMigrationTicker()
+	go kv.shardGCTicker()
 
 	return kv
 }

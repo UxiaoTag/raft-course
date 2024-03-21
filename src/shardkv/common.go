@@ -59,6 +59,7 @@ const (
 	ClientRequsetTimeout = 500 * time.Millisecond
 	FetchConfigIntval    = 100 * time.Millisecond
 	shardMigrationIntval = 50 * time.Millisecond
+	shardGCIntval        = 50 * time.Millisecond
 )
 const Debug = false
 
@@ -129,6 +130,7 @@ const (
 	ClientOpertion RaftOpType = iota
 	ConfigChange
 	ShardMingration
+	ShardGC
 )
 
 type RaftCommand struct {
