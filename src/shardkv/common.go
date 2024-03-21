@@ -22,6 +22,7 @@ const (
 	ErrWrongGroup  = "ErrWrongGroup"
 	ErrWrongLeader = "ErrWrongLeader"
 	ErrTimeout     = "ErrTimeout"
+	ErrWrongConfig = "ErrWrongConfig"
 )
 
 type Err string
@@ -107,6 +108,19 @@ func getOpType(str string) OpType {
 type lastOperationInfo struct {
 	SeqId int64
 	Reply *OpReply
+}
+
+// 这里改造一下，将raft log请求分成配置变更和用户操作
+type RaftOpType uint8
+
+const (
+	ClientOpertion RaftOpType = iota
+	ConfigChange
+)
+
+type RaftCommand struct {
+	CmdType RaftOpType
+	Data    interface{}
 }
 
 func (kv *ShardKV) matchGroup(Key string) bool {

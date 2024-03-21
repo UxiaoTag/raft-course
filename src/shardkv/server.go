@@ -23,13 +23,13 @@ type ShardKV struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	dead                 int32
-	lastApplied          int
-	MemoryKVStateMachine *MemoryKVStateMachine
-	notifyCh             map[int]chan *OpReply
-	duplicateTable       map[int64]lastOperationInfo
-	currentConfig        shardctrler.Config //当前的配置
-	mck                  *shardctrler.Clerk //请求客户端
+	dead           int32
+	lastApplied    int
+	shards         map[int]*MemoryKVStateMachine
+	notifyCh       map[int]chan *OpReply
+	duplicateTable map[int64]lastOperationInfo
+	currentConfig  shardctrler.Config //当前的配置
+	mck            *shardctrler.Clerk //请求客户端
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
@@ -43,9 +43,12 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	}
 	kv.mu.Unlock()
 
-	index, _, isLeader := kv.rf.Start(Op{
-		Key:    args.Key,
-		OpType: OpGet,
+	index, _, isLeader := kv.rf.Start(RaftCommand{
+		CmdType: ClientOpertion,
+		Data: Op{
+			Key:    args.Key,
+			OpType: OpGet,
+		},
 	})
 	if !isLeader {
 		reply.Err = ErrWrongLeader
@@ -97,12 +100,15 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	kv.mu.Unlock()
 
 	//调用raft,请求存储到raft日志并进行同步
-	index, _, isLeader := kv.rf.Start(Op{
-		Key:      args.Key,
-		Value:    args.Value,
-		OpType:   getOpType(args.Op),
-		ClientId: args.ClientId,
-		SeqId:    args.SeqId,
+	index, _, isLeader := kv.rf.Start(RaftCommand{
+		CmdType: ClientOpertion,
+		Data: Op{
+			Key:      args.Key,
+			Value:    args.Value,
+			OpType:   getOpType(args.Op),
+			ClientId: args.ClientId,
+			SeqId:    args.SeqId,
+		},
 	})
 	if !isLeader {
 		reply.Err = ErrWrongLeader
@@ -189,7 +195,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	kv.lastApplied = 0
 	kv.dead = 0
-	kv.MemoryKVStateMachine = NewMemoryKVStateMachine()
+	kv.shards = make(map[int]*MemoryKVStateMachine)
 	kv.notifyCh = make(map[int]chan *OpReply)
 	kv.duplicateTable = make(map[int64]lastOperationInfo)
 
@@ -205,13 +211,14 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 func (kv *ShardKV) applyToMemoryKVStateMachine(op Op) *OpReply {
 	var value string
 	var Err Err
+	shardid := key2shard(op.Key)
 	switch op.OpType {
 	case OpGet:
-		value, Err = kv.MemoryKVStateMachine.Get(op.Key)
+		value, Err = kv.shards[shardid].Get(op.Key)
 	case OpPut:
-		Err = kv.MemoryKVStateMachine.Put(op.Key, op.Value)
+		Err = kv.shards[shardid].Put(op.Key, op.Value)
 	case OpAppend:
-		Err = kv.MemoryKVStateMachine.Append(op.Key, op.Value)
+		Err = kv.shards[shardid].Append(op.Key, op.Value)
 	}
 	return &OpReply{Value: value, Err: Err}
 }
@@ -231,7 +238,7 @@ func (kv *ShardKV) removeNotifyChannel(index int) {
 func (kv *ShardKV) makeSnapShot(index int) {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	e.Encode(kv.MemoryKVStateMachine)
+	e.Encode(kv.shards)
 	e.Encode(kv.duplicateTable)
 	kv.rf.Snapshot(index, w.Bytes())
 }
@@ -242,12 +249,12 @@ func (kv *ShardKV) restoreSnapShot(snapshot []byte) {
 	}
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
-	var MemoryKVStateMachine MemoryKVStateMachine
+	var shards map[int]*MemoryKVStateMachine
 	var dupTable map[int64]lastOperationInfo
-	if err := d.Decode(&MemoryKVStateMachine); err != nil {
+	if err := d.Decode(&shards); err != nil {
 		panic(fmt.Sprintf("restore MemoryKVStateMachine Error %v", err))
 	}
-	kv.MemoryKVStateMachine = &MemoryKVStateMachine
+	kv.shards = shards
 	if err := d.Decode(&dupTable); err != nil {
 		panic(fmt.Sprintf("restore duplicateTable Error %v", err))
 	}
