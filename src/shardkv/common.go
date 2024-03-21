@@ -1,5 +1,12 @@
 package shardkv
 
+import (
+	"course/shardctrler"
+	"fmt"
+	"log"
+	"time"
+)
+
 //
 // Sharded key/value server.
 // Lots of replica groups, each running Raft.
@@ -14,6 +21,7 @@ const (
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongGroup  = "ErrWrongGroup"
 	ErrWrongLeader = "ErrWrongLeader"
+	ErrTimeout     = "ErrTimeout"
 )
 
 type Err string
@@ -27,6 +35,8 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	ClientId int64
+	SeqId    int64
 }
 
 type PutAppendReply struct {
@@ -41,4 +51,77 @@ type GetArgs struct {
 type GetReply struct {
 	Err   Err
 	Value string
+}
+
+const (
+	ClientRequsetTimeout = 500 * time.Millisecond
+	FetchConfigIntval    = 100 * time.Millisecond
+)
+const Debug = false
+
+func DPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+type Op struct {
+	// Your definitions here.
+	// Field names must start with capital letters,
+	// otherwise RPC will break.
+	Key      string
+	Value    string
+	OpType   OpType
+	ClientId int64
+	SeqId    int64
+}
+
+type OpReply struct {
+	Err   Err
+	Value string
+}
+
+type OpType uint8
+
+const (
+	OpGet    OpType = 0
+	OpPut    OpType = 1
+	OpAppend OpType = 2
+)
+
+func getOpType(str string) OpType {
+	switch str {
+	case "Get":
+		return OpGet
+	case "Put":
+		return OpPut
+	case "Append":
+		return OpAppend
+	default:
+		panic(fmt.Sprintf("unknow op"))
+	}
+
+}
+
+type lastOperationInfo struct {
+	SeqId int64
+	Reply *OpReply
+}
+
+func (kv *ShardKV) matchGroup(Key string) bool {
+	shard := key2shard(Key)
+	return kv.currentConfig.Shards[shard] == kv.gid
+}
+
+// which shard is a key in?
+// please use this function,
+// and please do not change it.
+func key2shard(key string) int {
+	shard := 0
+	if len(key) > 0 {
+		shard = int(key[0])
+	}
+	shard %= shardctrler.NShards
+	return shard
 }

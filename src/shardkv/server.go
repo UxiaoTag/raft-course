@@ -1,15 +1,16 @@
 package shardkv
 
-import "course/labrpc"
-import "course/raft"
-import "sync"
-import "course/labgob"
-
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
-}
+import (
+	"bytes"
+	"course/labgob"
+	"course/labrpc"
+	"course/raft"
+	"course/shardctrler"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+)
 
 type ShardKV struct {
 	mu           sync.Mutex
@@ -22,14 +23,107 @@ type ShardKV struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	dead                 int32
+	lastApplied          int
+	MemoryKVStateMachine *MemoryKVStateMachine
+	notifyCh             map[int]chan *OpReply
+	duplicateTable       map[int64]lastOperationInfo
+	currentConfig        shardctrler.Config //当前的配置
+	mck                  *shardctrler.Clerk //请求客户端
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	//判断是否是负责的分片，否则直接返回
+	kv.mu.Lock()
+	if !kv.matchGroup(args.Key) {
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+
+	index, _, isLeader := kv.rf.Start(Op{
+		Key:    args.Key,
+		OpType: OpGet,
+	})
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	//等待结果
+	kv.mu.Lock()
+	notifyCh := kv.getNotifyChannel(index)
+	kv.mu.Unlock()
+
+	select {
+	case result := <-notifyCh:
+		reply.Value = result.Value
+		reply.Err = result.Err
+	//该处time.After()返回一个通道，这个通道将在指定的时间后发送一个值（通常是nil），然后关闭。当通道关闭时，select语句中的相应case分支会被执行。所以这句话就是一个计时器
+	case <-time.After(ClientRequsetTimeout):
+		reply.Err = ErrTimeout
+	}
+	//异步删除通知的通道，因为是index产生的，所以通道唯一，用完要删
+	go func() {
+		kv.mu.Lock()
+		kv.removeNotifyChannel(index)
+		kv.mu.Unlock()
+	}()
+}
+
+// 如果重复发送过返回true,这里seqId如果<=存储中的info.seqId，说明这条命令是在之前就执行过的。
+func (kv *ShardKV) requestDuplicated(clientId, seqId int64) bool {
+	info, ok := kv.duplicateTable[clientId]
+	return ok && seqId <= info.SeqId
 }
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	kv.mu.Lock()
+	//判断是否是负责的分片，否则直接返回
+	if !kv.matchGroup(args.Key) {
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+		return
+	}
+	//判断是否执行过
+	if kv.requestDuplicated(args.ClientId, args.SeqId) {
+		// 如果是重复请求，直接返回结果
+		reply.Err = kv.duplicateTable[args.ClientId].Reply.Err
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+
+	//调用raft,请求存储到raft日志并进行同步
+	index, _, isLeader := kv.rf.Start(Op{
+		Key:      args.Key,
+		Value:    args.Value,
+		OpType:   getOpType(args.Op),
+		ClientId: args.ClientId,
+		SeqId:    args.SeqId,
+	})
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	//等待结果
+	kv.mu.Lock()
+	notifyCh := kv.getNotifyChannel(index)
+	kv.mu.Unlock()
+	select {
+	case result := <-notifyCh:
+		reply.Err = result.Err
+	case <-time.After(ClientRequsetTimeout):
+		reply.Err = ErrTimeout
+	}
+	//异步删除这些通道，因为是index产生的，所以通道唯一，用完要删
+	go func() {
+		kv.mu.Lock()
+		kv.removeNotifyChannel(index)
+		kv.mu.Unlock()
+	}()
 }
 
 // the tester calls Kill() when a ShardKV instance won't
@@ -37,8 +131,14 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // in Kill(), but it might be convenient to (for example)
 // turn off debug output from this instance.
 func (kv *ShardKV) Kill() {
+	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
 	// Your code here, if desired.
+}
+
+func (kv *ShardKV) killed() bool {
+	z := atomic.LoadInt32(&kv.dead)
+	return z == 1
 }
 
 // servers[] contains the ports of the servers in this group.
@@ -82,10 +182,74 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// Your initialization code here.
 
 	// Use something like this to talk to the shardctrler:
-	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
+	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
+	kv.lastApplied = 0
+	kv.dead = 0
+	kv.MemoryKVStateMachine = NewMemoryKVStateMachine()
+	kv.notifyCh = make(map[int]chan *OpReply)
+	kv.duplicateTable = make(map[int64]lastOperationInfo)
+
+	//read snapshot
+	kv.restoreSnapShot(persister.ReadSnapshot())
+
+	// You may need initialization code here.
+	go kv.applyTicker()
+	go kv.fetchConfigTicker()
+
 	return kv
+}
+func (kv *ShardKV) applyToMemoryKVStateMachine(op Op) *OpReply {
+	var value string
+	var Err Err
+	switch op.OpType {
+	case OpGet:
+		value, Err = kv.MemoryKVStateMachine.Get(op.Key)
+	case OpPut:
+		Err = kv.MemoryKVStateMachine.Put(op.Key, op.Value)
+	case OpAppend:
+		Err = kv.MemoryKVStateMachine.Append(op.Key, op.Value)
+	}
+	return &OpReply{Value: value, Err: Err}
+}
+
+func (kv *ShardKV) getNotifyChannel(index int) chan *OpReply {
+	if _, ok := kv.notifyCh[index]; !ok {
+		kv.notifyCh[index] = make(chan *OpReply, 1)
+	}
+	return kv.notifyCh[index]
+}
+
+// 这个channel是唯一的(由日志的index决定，所以用完要释放)
+func (kv *ShardKV) removeNotifyChannel(index int) {
+	delete(kv.notifyCh, index)
+}
+
+func (kv *ShardKV) makeSnapShot(index int) {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.MemoryKVStateMachine)
+	e.Encode(kv.duplicateTable)
+	kv.rf.Snapshot(index, w.Bytes())
+}
+
+func (kv *ShardKV) restoreSnapShot(snapshot []byte) {
+	if len(snapshot) == 0 {
+		return
+	}
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var MemoryKVStateMachine MemoryKVStateMachine
+	var dupTable map[int64]lastOperationInfo
+	if err := d.Decode(&MemoryKVStateMachine); err != nil {
+		panic(fmt.Sprintf("restore MemoryKVStateMachine Error %v", err))
+	}
+	kv.MemoryKVStateMachine = &MemoryKVStateMachine
+	if err := d.Decode(&dupTable); err != nil {
+		panic(fmt.Sprintf("restore duplicateTable Error %v", err))
+	}
+	kv.duplicateTable = dupTable
 }
