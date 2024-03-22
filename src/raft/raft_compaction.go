@@ -30,7 +30,7 @@ type InstallSnapshotArgs struct {
 	LastIncludedIndex int
 	LastIncludedTerm  int
 
-	Snaphot []byte
+	Snapshot []byte
 }
 
 type InstallSnapshotReply struct {
@@ -98,7 +98,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		return
 	}
 	// install the snapshot
-	rf.log.InstallSnapshot(args.LastIncludedIndex, args.LastIncludedTerm, args.Snaphot)
+	rf.log.InstallSnapshot(args.LastIncludedIndex, args.LastIncludedTerm, args.Snapshot)
 	rf.persistLocked()
 	rf.snapPending = true
 	//append log?

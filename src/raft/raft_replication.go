@@ -266,7 +266,7 @@ func (rf *Raft) startReplication(term int) bool {
 				LeaderId:          rf.me,
 				LastIncludedIndex: rf.log.snapLastIdx,
 				LastIncludedTerm:  rf.log.snapLastTerm,
-				Snaphot:           rf.log.snapshot,
+				Snapshot:          rf.log.snapshot,
 			}
 			LOG(rf.me, rf.currentTerm, DDebug, "-> S%d, InstallSnap, Args=%v", peer, args.String())
 			go rf.installOnPeer(peer, term, args)

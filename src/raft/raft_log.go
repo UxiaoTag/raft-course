@@ -35,7 +35,6 @@ func NewLog(snapshotlastIndex int, snapshotlastTerm int, snapshot []byte, entrie
 func (rl *RaftLog) readPersist(d *labgob.LabDecoder) error {
 	var snapLastIdx int
 	var snapLastTerm int
-	// var snapshot []byte
 	var log []LogEntry
 	if err := d.Decode(&snapLastIdx); err != nil {
 		return fmt.Errorf("decode last include index failed")
@@ -56,7 +55,6 @@ func (rl *RaftLog) readPersist(d *labgob.LabDecoder) error {
 func (rl *RaftLog) Persist(e *labgob.LabEncoder) {
 	e.Encode(rl.snapLastIdx)
 	e.Encode(rl.snapLastTerm)
-	// e.Encode(rl.snapshot)
 	e.Encode(rl.tailLog)
 }
 
@@ -84,6 +82,11 @@ func (rl *RaftLog) at(logicIdx int) LogEntry {
 	return rl.tailLog[rl.idx(logicIdx)]
 }
 
+func (rl *RaftLog) last() (idx int, term int) {
+	return rl.size() - 1, rl.tailLog[len(rl.tailLog)-1].Term
+	//估计可以用rl.tailLog[rl.size()-rl.snapLastIdx-1].Term
+}
+
 // 顺序寻找该任期最小的日志index
 func (rl *RaftLog) firstForTerm(Term int) int {
 	for i, entry := range rl.tailLog {
@@ -94,6 +97,23 @@ func (rl *RaftLog) firstForTerm(Term int) int {
 		}
 	}
 	return InvalidIndex
+}
+
+func (rl *RaftLog) tail(startIdx int) []LogEntry {
+	if startIdx >= rl.size() {
+		return nil
+	}
+	return rl.tailLog[rl.idx(startIdx):]
+}
+
+// append LogEntry
+func (rl *RaftLog) append(entry LogEntry) {
+	rl.tailLog = append(rl.tailLog, entry)
+}
+
+// append []LogEntry
+func (rl *RaftLog) appendFrom(prevIdx int, entries []LogEntry) {
+	rl.tailLog = append(rl.tailLog[:rl.idx(prevIdx)+1], entries...)
 }
 
 // 但是情况不能理解是，如果没记错的话，rf.log[0]是一个空日志，输出应该固定有一个是[0,0(1-1)]Term 0
@@ -112,34 +132,6 @@ func (rl *RaftLog) String() string {
 	}
 	terms += fmt.Sprintf(" [%d, %d]T%d;", prevStart, rl.size()-1, prevTerm)
 	return terms
-}
-
-// more simplified
-func (rl *RaftLog) Str() string {
-	lastIdx, lastTerm := rl.last()
-	return fmt.Sprintf("[%d]T%d~[%d]T%d", rl.snapLastIdx, rl.snapLastTerm, lastIdx, lastTerm)
-}
-
-// append LogEntry
-func (rl *RaftLog) append(entry LogEntry) {
-	rl.tailLog = append(rl.tailLog, entry)
-}
-
-// append []LogEntry
-func (rl *RaftLog) appendFrom(prevIdx int, entries []LogEntry) {
-	rl.tailLog = append(rl.tailLog[:rl.idx(prevIdx)+1], entries...)
-}
-
-func (rl *RaftLog) last() (idx int, term int) {
-	return rl.size() - 1, rl.tailLog[len(rl.tailLog)-1].Term
-	//估计可以用rl.tailLog[rl.size()-rl.snapLastIdx-1].Term
-}
-
-func (rl *RaftLog) tail(startIdx int) []LogEntry {
-	if startIdx >= rl.size() {
-		return nil
-	}
-	return rl.tailLog[rl.idx(startIdx):]
 }
 
 // leader used
@@ -178,4 +170,10 @@ func (rl *RaftLog) InstallSnapshot(index, term int, snapshot []byte) {
 	})
 	// newlog = append(newlog, rl.tailLog[idx+1:]...)
 	rl.tailLog = newlog
+}
+
+// more simplified
+func (rl *RaftLog) Str() string {
+	lastIdx, lastTerm := rl.last()
+	return fmt.Sprintf("[%d]T%d~[%d]T%d", rl.snapLastIdx, rl.snapLastTerm, lastIdx, lastTerm)
 }
