@@ -296,3 +296,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	return rf
 }
+
+func (rf *Raft) GetMe() int {
+
+	// var term int
+	// var isleader bool
+	// Your code here (PartA).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.me
+}

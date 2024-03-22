@@ -11,7 +11,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	LOG(rf.me, rf.currentTerm, DSnap, "Snap on %d", index)
-	if index > rf.commitIndex {
+	if index > rf.commitIndex || index >= rf.log.size() {
 		LOG(rf.me, rf.currentTerm, DSnap, "Couldn't snapshot before CommitIdx: %d>%d", index, rf.commitIndex)
 		return
 	}
@@ -19,6 +19,8 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 		LOG(rf.me, rf.currentTerm, DSnap, "%d<=%d no need", index, rf.log.snapLastIdx)
 		return
 	}
+	//出了一个很逆天的panic: 57 is out of [56, 56]，日志都没那么长，怎么出现commitIndex==rf.log.size()，所以在前面加个忽略
+	// println("index:", index, "snapLastIdx:", rf.log.snapLastIdx, "rf.commitIndex:", rf.commitIndex, "rf.size()", rf.log.size())
 	rf.log.doSnapshot(index, snapshot)
 	rf.persistLocked()
 }

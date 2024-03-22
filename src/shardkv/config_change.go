@@ -55,7 +55,7 @@ func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
 		for i := 0; i < shardctrler.NShards; i++ {
 			//处理分段进来
 			if kv.currentConfig.Shards[i] != kv.gid && newConfig.Shards[i] == kv.gid {
-				// 需要迁移进来TODO
+				// 需要迁移进来
 				gid := kv.currentConfig.Shards[i]
 				if gid != 0 {
 					kv.shards[i].Status = MoveIn

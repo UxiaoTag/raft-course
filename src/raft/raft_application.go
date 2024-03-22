@@ -23,6 +23,9 @@ func (rf *Raft) applicationTicker() {
 				entries = append(entries, rf.log.at(i))
 			}
 		}
+		snapshot := rf.log.snapshot
+		snapshotIndex := rf.log.snapLastIdx
+		snapshotTerm := rf.log.snapLastTerm
 		rf.mu.Unlock()
 
 		if !snapPendingInstall {
@@ -39,9 +42,9 @@ func (rf *Raft) applicationTicker() {
 			//但是这里是覆盖式的
 			rf.applyCh <- ApplyMsg{
 				SnapshotValid: true,
-				Snapshot:      rf.log.snapshot,
-				SnapshotIndex: rf.log.snapLastIdx,
-				SnapshotTerm:  rf.log.snapLastTerm,
+				Snapshot:      snapshot,
+				SnapshotIndex: snapshotIndex,
+				SnapshotTerm:  snapshotTerm,
 			}
 		}
 
