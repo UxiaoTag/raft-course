@@ -71,7 +71,7 @@ func (rl *RaftLog) size() int {
 func (rl *RaftLog) idx(logicIdx int) int {
 	// if the logicIdx fall beyond [snapLastIdx, size()-1]
 	if logicIdx < rl.snapLastIdx || logicIdx >= rl.size() {
-		panic(fmt.Sprintf("%d is out of [%d, %d]", logicIdx, rl.snapLastIdx+1, rl.size()-1))
+		panic(fmt.Sprintf("%d is out of [%d, %d]", logicIdx, rl.snapLastIdx, rl.size()-1))
 	}
 	return logicIdx - rl.snapLastIdx
 }

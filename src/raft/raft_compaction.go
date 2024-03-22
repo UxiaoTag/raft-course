@@ -12,11 +12,11 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	defer rf.mu.Unlock()
 	LOG(rf.me, rf.currentTerm, DSnap, "Snap on %d", index)
 	if index > rf.commitIndex {
-		LOG(rf.me, rf.currentTerm, DError, "can't snapshot no commit log")
+		LOG(rf.me, rf.currentTerm, DSnap, "Couldn't snapshot before CommitIdx: %d>%d", index, rf.commitIndex)
 		return
 	}
 	if index <= rf.log.snapLastIdx {
-		LOG(rf.me, rf.currentTerm, DError, "%d<=%d no need", index, rf.log.snapLastIdx)
+		LOG(rf.me, rf.currentTerm, DSnap, "%d<=%d no need", index, rf.log.snapLastIdx)
 		return
 	}
 	rf.log.doSnapshot(index, snapshot)

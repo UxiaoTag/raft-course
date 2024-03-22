@@ -95,7 +95,7 @@ func (kv *ShardKV) applyShardMingration(reply *ShardOperationReply) *OpReply {
 		}
 
 		//拷贝去重表的数据
-		for clientId, table := range reply.duplicateTable {
+		for clientId, table := range reply.DuplicateTable {
 			localtable, ok := kv.duplicateTable[clientId]
 			if !ok || localtable.SeqId < table.SeqId {
 				kv.duplicateTable[clientId] = table

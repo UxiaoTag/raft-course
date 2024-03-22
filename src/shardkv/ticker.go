@@ -38,6 +38,8 @@ func (kv *ShardKV) applyTicker() {
 
 				//判断是否需要snapshot
 				if kv.maxraftstate != -1 && kv.rf.GetRaftStateSize() >= kv.maxraftstate {
+					//这里倒是出过一个的问题，panic: 57 is out of [57, 56]
+					// println("%d>=%d,sould be snapshot", kv.rf.GetRaftStateSize(), kv.maxraftstate)
 					kv.makeSnapShot(message.CommandIndex)
 				}
 				kv.mu.Unlock()
@@ -182,9 +184,9 @@ func (kv *ShardKV) GetShardData(args *ShardOperationArgs, reply *ShardOperationR
 	}
 
 	//拷贝去重表
-	reply.duplicateTable = make(map[int64]lastOperationInfo)
+	reply.DuplicateTable = make(map[int64]lastOperationInfo)
 	for clientId, op := range kv.duplicateTable {
-		reply.duplicateTable[clientId] = op.copyData()
+		reply.DuplicateTable[clientId] = op.copyData()
 	}
 
 	reply.ConfigNum, reply.Err = args.ConfigNum, OK

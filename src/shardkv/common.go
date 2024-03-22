@@ -156,7 +156,7 @@ type ShardOperationReply struct {
 	Err            Err
 	ConfigNum      int
 	ShardData      map[int]map[string]string
-	duplicateTable map[int64]lastOperationInfo
+	DuplicateTable map[int64]lastOperationInfo
 }
 
 func (kv *ShardKV) matchGroup(Key string) bool {
