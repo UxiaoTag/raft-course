@@ -494,3 +494,108 @@ func (cfg *config) Getmck() *shardctrler.Clerk {
 func (cfg *config) Leave(gi int) {
 	cfg.leavem([]int{gi})
 }
+
+// Shutdown i'th server of gi'th group, by isolating it
+func (cfg *config) ShutdownShardKvServer(gi int, i int) {
+	cfg.mu.Lock()
+	defer cfg.mu.Unlock()
+
+	gg := cfg.groups[gi]
+
+	// prevent this server from sending
+	for j := 0; j < len(gg.servers); j++ {
+		name := gg.endnames[i][j]
+		cfg.net.Enable(name, false)
+	}
+	//我不希望关掉shardctrler
+	// for j := 0; j < len(gg.mendnames[i]); j++ {
+	// 	name := gg.mendnames[i][j]
+	// 	cfg.net.Enable(name, false)
+	// }
+
+	// disable client connections to the server.
+	// it's important to do this before creating
+	// the new Persister in saved[i], to avoid
+	// the possibility of the server returning a
+	// positive reply to an Append but persisting
+	// the result in the superseded Persister.
+	cfg.net.DeleteServer(cfg.servername(gg.gid, i))
+
+	// a fresh persister, in case old instance
+	// continues to update the Persister.
+	// but copy old persister's content so that we always
+	// pass Make() the last persisted state.
+	if gg.saved[i] != nil {
+		gg.saved[i] = gg.saved[i].Copy()
+	}
+
+	kv := gg.servers[i]
+	if kv != nil {
+		cfg.mu.Unlock()
+		kv.Kill()
+		cfg.mu.Lock()
+		gg.servers[i] = nil
+	}
+}
+
+func (cfg *config) StartShardKvServer(gi int, i int) {
+	cfg.mu.Lock()
+
+	gg := cfg.groups[gi]
+
+	// a fresh set of outgoing ClientEnd names
+	// to talk to other servers in this group.
+	gg.endnames[i] = make([]string, cfg.n)
+	for j := 0; j < cfg.n; j++ {
+		gg.endnames[i][j] = randstring(20)
+	}
+
+	// and the connections to other servers in this group.
+	ends := make([]*labrpc.ClientEnd, cfg.n)
+	for j := 0; j < cfg.n; j++ {
+		ends[j] = cfg.net.MakeEnd(gg.endnames[i][j])
+		cfg.net.Connect(gg.endnames[i][j], cfg.servername(gg.gid, j))
+		cfg.net.Enable(gg.endnames[i][j], true)
+	}
+
+	// ends to talk to shardctrler service
+	//我不希望操作ctr，我只对shardkv启停
+	//我看了一下，只是改变状态，应该不会影响
+	mends := make([]*labrpc.ClientEnd, cfg.nctrlers)
+	gg.mendnames[i] = make([]string, cfg.nctrlers)
+	for j := 0; j < cfg.nctrlers; j++ {
+		gg.mendnames[i][j] = randstring(20)
+		mends[j] = cfg.net.MakeEnd(gg.mendnames[i][j])
+		cfg.net.Connect(gg.mendnames[i][j], cfg.ctrlername(j))
+		cfg.net.Enable(gg.mendnames[i][j], true)
+	}
+
+	// a fresh persister, so old instance doesn't overwrite
+	// new instance's persisted state.
+	// give the fresh persister a copy of the old persister's
+	// state, so that the spec is that we pass StartKVServer()
+	// the last persisted state.
+	if gg.saved[i] != nil {
+		gg.saved[i] = gg.saved[i].Copy()
+	} else {
+		gg.saved[i] = raft.MakePersister()
+	}
+	cfg.mu.Unlock()
+
+	gg.servers[i] = StartServer(ends, i, gg.saved[i], cfg.maxraftstate,
+		gg.gid, mends,
+		func(servername string) *labrpc.ClientEnd {
+			name := randstring(20)
+			end := cfg.net.MakeEnd(name)
+			cfg.net.Connect(name, servername)
+			cfg.net.Enable(name, true)
+			return end
+		})
+
+	kvsvc := labrpc.MakeService(gg.servers[i])
+	rfsvc := labrpc.MakeService(gg.servers[i].rf)
+	srv := labrpc.MakeServer()
+	srv.AddService(kvsvc)
+	srv.AddService(rfsvc)
+	cfg.net.AddServer(cfg.servername(gg.gid, i), srv)
+}

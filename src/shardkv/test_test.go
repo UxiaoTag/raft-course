@@ -946,11 +946,24 @@ func TestMyTest(t *testing.T) {
 	gis := []int{0, 1, 2}
 	cfg.joinm(gis)
 
-	// ck := cfg.makeClient()
-	for _, g := range gis {
-		gid := cfg.groups[g].gid
-		for i := 0; i < cfg.n; i++ {
-			println(cfg.servername(gid, i))
-		}
+	ck := cfg.makeClient()
+	ck.Get("123")
+	ck.Get("23")
+	ck.Get("3")
+	ck.Get("/3413")
+	ok := ck.CheckNode(100, 0)
+	if ok {
+		fmt.Print("nice")
+	}
+
+	cfg.ShutdownShardKvServer(0, 1)
+	ok = ck.CheckNode(100, 1)
+	if ok {
+		fmt.Print("nice")
+	}
+	cfg.StartShardKvServer(0, 1)
+	ok = ck.CheckNode(100, 1)
+	if ok {
+		fmt.Print("nice")
 	}
 }

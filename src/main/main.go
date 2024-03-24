@@ -4,6 +4,7 @@ import (
 	"course/shardkv"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -94,8 +95,23 @@ func main() {
 			cfg.Leave(data.Num)
 		}
 		//执行完后返回当前配置：
-		nowConfig := cfg.Getmck().Query(-1)
-		ctx.JSON(http.StatusOK, nowConfig)
+		changeConfig := cfg.Getmck().Query(-1)
+		ctx.JSON(http.StatusOK, changeConfig)
+	}
+
+	//init shutdownServer/startServer TODO
+	StartOrShutdownFunc := func(ctx *gin.Context) {
+		gid, _ := strconv.Atoi(ctx.Query("gid"))
+		id, _ := strconv.Atoi(ctx.Query("id"))
+		var str string
+		if ctx.Query("Op") == "st" {
+			cfg.ShutdownShardKvServer(gid, id)
+			str = "shutdown ?"
+		} else {
+			cfg.StartShardKvServer(gid, id)
+			str = "start ok"
+		}
+		ctx.JSON(http.StatusOK, str)
 	}
 
 	router := gin.Default()
@@ -107,6 +123,15 @@ func main() {
 	})
 	router.POST("/PutOrAppend", PutOrAppenfunc)
 	router.POST("/JoinOrLeave", JoinOrLeaveFunc)
+	router.GET("/GetLeader", func(ctx *gin.Context) {
+		Leaderids := ck.GetLeader()
+		ctx.JSON(http.StatusOK, Leaderids)
+	})
+	//不要使用该功能，关了请立刻开回去，不然坏机了
+	router.GET("/Shutdown", StartOrShutdownFunc)
 
 	router.Run()
 }
+
+//cfg.StartShardKvServer(groupindex, id{0,1,2,3,4})
+//cfg.ShutdownShardKvServer(groupindex, id{0,1,2,3,4})

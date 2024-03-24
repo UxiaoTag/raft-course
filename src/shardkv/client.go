@@ -169,3 +169,17 @@ func (ck *Clerk) GetClientId() int64 {
 func (ck *Clerk) GetLeader() map[int]int {
 	return ck.leaderIds
 }
+
+// use for Check node is ture
+func (ck *Clerk) CheckNode(gid, id int) bool {
+	servers := ck.config.Groups[gid]
+	if len(servers) < id || len(servers) == 0 {
+		return false
+	}
+	srv := ck.make_end(servers[id])
+	var reply GetReply
+	args := GetArgs{}
+	args.Key = "?"
+	ok := srv.Call("ShardKV.Get", &args, &reply)
+	return ok
+}
