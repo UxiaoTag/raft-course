@@ -165,3 +165,7 @@ func (ck *Clerk) Append(key string, value string) {
 func (ck *Clerk) GetClientId() int64 {
 	return ck.clientId
 }
+
+func (ck *Clerk) GetLeader() map[int]int {
+	return ck.leaderIds
+}

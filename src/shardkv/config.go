@@ -399,7 +399,7 @@ func Makeconfig(n int, unreliable bool, maxraftstate int) *config {
 	cfg.start = time.Now()
 
 	// controler
-	cfg.nctrlers = 3
+	cfg.nctrlers = 5
 	cfg.ctrlerservers = make([]*shardctrler.ShardCtrler, cfg.nctrlers)
 	for i := 0; i < cfg.nctrlers; i++ {
 		cfg.StartCtrlerserver(i)
