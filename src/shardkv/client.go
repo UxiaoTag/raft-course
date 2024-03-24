@@ -161,3 +161,7 @@ func (ck *Clerk) Put(key string, value string) {
 func (ck *Clerk) Append(key string, value string) {
 	ck.PutAppend(key, value, "Append")
 }
+
+func (ck *Clerk) GetClientId() int64 {
+	return ck.clientId
+}

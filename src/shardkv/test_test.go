@@ -1,15 +1,17 @@
 package shardkv
 
-import "course/porcupine"
-import "course/models"
-import "testing"
-import "strconv"
-import "time"
-import "fmt"
-import "sync/atomic"
-import "sync"
-import "math/rand"
-import "io/ioutil"
+import (
+	"course/models"
+	"course/porcupine"
+	"fmt"
+	"io/ioutil"
+	"math/rand"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
 const linearizabilityCheckTimeout = 1 * time.Second
 
@@ -935,4 +937,20 @@ func TestChallenge2Partial(t *testing.T) {
 	}
 
 	fmt.Printf("  ... Passed\n")
+}
+
+func TestMyTest(t *testing.T) {
+	cfg := make_config(t, 3, true, 100)
+	defer cfg.cleanup()
+
+	gis := []int{0, 1, 2}
+	cfg.joinm(gis)
+
+	// ck := cfg.makeClient()
+	for _, g := range gis {
+		gid := cfg.groups[g].gid
+		for i := 0; i < cfg.n; i++ {
+			println(cfg.servername(gid, i))
+		}
+	}
 }

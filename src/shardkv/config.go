@@ -1,21 +1,23 @@
 package shardkv
 
-import "course/shardctrler"
-import "course/labrpc"
-import "testing"
-import "os"
+import (
+	"course/labrpc"
+	"course/shardctrler"
+	"os"
+	"testing"
 
-// import "log"
-import crand "crypto/rand"
-import "math/big"
-import "math/rand"
-import "encoding/base64"
-import "sync"
-import "runtime"
-import "course/raft"
-import "strconv"
-import "fmt"
-import "time"
+	// import "log"
+	"course/raft"
+	crand "crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"math/big"
+	"math/rand"
+	"runtime"
+	"strconv"
+	"sync"
+	"time"
+)
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)
@@ -379,4 +381,116 @@ func make_config(t *testing.T, n int, unreliable bool, maxraftstate int) *config
 	cfg.net.Reliable(!unreliable)
 
 	return cfg
+}
+
+// use for main
+func Makeconfig(n int, unreliable bool, maxraftstate int) *config {
+	ncpu_once.Do(func() {
+		if runtime.NumCPU() < 2 {
+			fmt.Printf("warning: only one CPU, which may conceal locking bugs\n")
+		}
+		rand.Seed(makeSeed())
+	})
+	runtime.GOMAXPROCS(4)
+	cfg := &config{}
+	// cfg.t = t
+	cfg.maxraftstate = maxraftstate
+	cfg.net = labrpc.MakeNetwork()
+	cfg.start = time.Now()
+
+	// controler
+	cfg.nctrlers = 3
+	cfg.ctrlerservers = make([]*shardctrler.ShardCtrler, cfg.nctrlers)
+	for i := 0; i < cfg.nctrlers; i++ {
+		cfg.StartCtrlerserver(i)
+	}
+	cfg.mck = cfg.shardclerk()
+
+	cfg.ngroups = 3
+	cfg.groups = make([]*group, cfg.ngroups)
+	cfg.n = n
+	for gi := 0; gi < cfg.ngroups; gi++ {
+		gg := &group{}
+		cfg.groups[gi] = gg
+		gg.gid = 100 + gi
+		gg.servers = make([]*ShardKV, cfg.n)
+		gg.saved = make([]*raft.Persister, cfg.n)
+		gg.endnames = make([][]string, cfg.n)
+		gg.mendnames = make([][]string, cfg.nctrlers)
+		for i := 0; i < cfg.n; i++ {
+			cfg.StartServer(gi, i)
+		}
+	}
+
+	cfg.clerks = make(map[*Clerk][]string)
+	cfg.nextClientId = cfg.n + 1000 // client ids start 1000 above the highest serverid
+
+	cfg.net.Reliable(!unreliable)
+
+	return cfg
+}
+
+func (cfg *config) Cleanup() {
+	for gi := 0; gi < cfg.ngroups; gi++ {
+		cfg.ShutdownGroup(gi)
+	}
+	for i := 0; i < cfg.nctrlers; i++ {
+		cfg.ctrlerservers[i].Kill()
+	}
+	cfg.net.Cleanup()
+	cfg.checkTimeout()
+}
+
+func (cfg *config) Joinm(gis []int) {
+	m := make(map[int][]string, len(gis))
+	for _, g := range gis {
+		gid := cfg.groups[g].gid
+		servernames := make([]string, cfg.n)
+		for i := 0; i < cfg.n; i++ {
+			servernames[i] = cfg.servername(gid, i)
+		}
+		m[gid] = servernames
+	}
+	cfg.mck.Join(m)
+}
+
+func (cfg *config) MakeClient() *Clerk {
+	cfg.mu.Lock()
+	defer cfg.mu.Unlock()
+
+	// ClientEnds to talk to controler service.
+	ends := make([]*labrpc.ClientEnd, cfg.nctrlers)
+	endnames := make([]string, cfg.n)
+	for j := 0; j < cfg.nctrlers; j++ {
+		endnames[j] = randstring(20)
+		ends[j] = cfg.net.MakeEnd(endnames[j])
+		cfg.net.Connect(endnames[j], cfg.ctrlername(j))
+		cfg.net.Enable(endnames[j], true)
+	}
+
+	ck := MakeClerk(ends, func(servername string) *labrpc.ClientEnd {
+		name := randstring(20)
+		end := cfg.net.MakeEnd(name)
+		cfg.net.Connect(name, servername)
+		cfg.net.Enable(name, true)
+		return end
+	})
+	cfg.clerks[ck] = endnames
+	cfg.nextClientId++
+	return ck
+}
+
+func (cfg *config) Getmck() *shardctrler.Clerk {
+	return cfg.mck
+}
+
+//	func (cfg *config) Leavem(gis []int) {
+//		gids := make([]int, 0, len(gis))
+//		for _, g := range gis {
+//			gids = append(gids, cfg.groups[g].gid)
+//		}
+//		cfg.mck.Leave(gids)
+//	}
+func (cfg *config) Leave(gi int) {
+	cfg.leavem([]int{gi})
 }

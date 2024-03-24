@@ -220,7 +220,7 @@ func (kv *ShardKV) applyClientOp(op Op) *OpReply {
 		//如果该命令不是get且返回过
 		if op.OpType != OpGet && kv.requestDuplicated(op.ClientId, op.SeqId) {
 			Reply = kv.duplicateTable[op.ClientId].Reply
-			println("me:", kv.rf.GetMe(), "No push client:", op.ClientId, ",sendSeqId", op.SeqId, " kv.duplicateTable[op.ClientId].nowSeqId", kv.duplicateTable[op.ClientId].SeqId, " ,opType", op.OpType, " ,opkeyvlaue", op.Key, op.Value)
+			// println("me:", kv.rf.GetMe(), "No push client:", op.ClientId, ",sendSeqId", op.SeqId, " kv.duplicateTable[op.ClientId].nowSeqId", kv.duplicateTable[op.ClientId].SeqId, " ,opType", op.OpType, " ,opkeyvlaue", op.Key, op.Value)
 		} else {
 			//操作应用到状态机
 			//这里有个究极疑问，就是如果你在客户端1104执行了10条命令并且都apply了，然后你突然拿到需要apply一条seq为1的命令，
@@ -228,7 +228,7 @@ func (kv *ShardKV) applyClientOp(op Op) *OpReply {
 			//也就是你返回的是10的返回结果，虽然我理解这个最重要的是不执行，且返回估计就是ok，没什么区别但是还是不理解。
 			Reply = kv.applyToMemoryKVStateMachine(op)
 			if op.OpType != OpGet {
-				println("me:", kv.rf.GetMe(), "push client:", op.ClientId, ",sendSeqId", op.SeqId, " kv.duplicateTable[op.ClientId].nowSeqId", kv.duplicateTable[op.ClientId].SeqId, " ,opType", op.OpType, " ,opkeyvlaue", op.Key, op.Value)
+				// println("me:", kv.rf.GetMe(), "push client:", op.ClientId, ",sendSeqId", op.SeqId, " kv.duplicateTable[op.ClientId].nowSeqId", kv.duplicateTable[op.ClientId].SeqId, " ,opType", op.OpType, " ,opkeyvlaue", op.Key, op.Value)
 				kv.duplicateTable[op.ClientId] = lastOperationInfo{
 					SeqId: op.SeqId,
 					Reply: Reply,
