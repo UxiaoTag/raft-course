@@ -947,23 +947,19 @@ func TestMyTest(t *testing.T) {
 	cfg.joinm(gis)
 
 	ck := cfg.makeClient()
-	ck.Get("123")
-	ck.Get("23")
-	ck.Get("3")
-	ck.Get("/3413")
 	ok := ck.CheckNode(100, 0)
-	if ok {
+	if ok == OK {
 		fmt.Print("nice")
 	}
 
 	cfg.ShutdownShardKvServer(0, 1)
 	ok = ck.CheckNode(100, 1)
-	if ok {
+	if ok == OK {
 		fmt.Print("nice")
 	}
 	cfg.StartShardKvServer(0, 1)
 	ok = ck.CheckNode(100, 1)
-	if ok {
+	if ok == OK {
 		fmt.Print("nice")
 	}
 }

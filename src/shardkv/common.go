@@ -24,6 +24,7 @@ const (
 	ErrTimeout     = "ErrTimeout"
 	ErrWrongConfig = "ErrWrongConfig"
 	ErrNotReadly   = "ErrNotReadly"
+	ErrSendError   = "ErrSendError"
 )
 
 type Err string
@@ -175,4 +176,26 @@ func key2shard(key string) int {
 	}
 	shard %= shardctrler.NShards
 	return shard
+}
+
+func shardtoKey(shard int) string {
+	// Ensure the shard index is non-negative
+	if shard < 0 {
+		shard = 0
+	}
+	// Ensure the shard index does not exceed the maximum number of shards
+	if shard >= shardctrler.NShards {
+		shard = shardctrler.NShards - 1
+	}
+
+	// Convert the shard index to a byte (ASCII representation)
+	shardByte := byte(shard)
+
+	// Define a fixed suffix for the key
+	fixedSuffix := "-keySuffix"
+
+	// Concatenate the shard byte and the fixed suffix to form the key
+	key := string(shardByte) + fixedSuffix
+
+	return key
 }

@@ -171,15 +171,49 @@ func (ck *Clerk) GetLeader() map[int]int {
 }
 
 // use for Check node is ture
-func (ck *Clerk) CheckNode(gid, id int) bool {
-	servers := ck.config.Groups[gid]
-	if len(servers) < id || len(servers) == 0 {
-		return false
+// 这里Get的数据不一定存在，我们认为返回只要是OK/ErrNoKey,则代表该节点可达并且是Leader
+// 如果返回ErrWrongLeader则认为节点可达但不是leader
+func (ck *Clerk) CheckNode(gid, id int) Err {
+	timeoutDuration := 300 * time.Millisecond  // 设置超时时间为300毫秒
+	timeoutChan := time.After(timeoutDuration) // 创建一个300毫秒后触发的定时器
+	for {
+		select {
+		case <-timeoutChan:
+			// 如果定时器触发，跳出循环
+			return ErrTimeout
+		default:
+			// 继续执行循环体
+		}
+		servers := ck.config.Groups[gid]
+		if len(servers) == 0 || id >= len(servers) || servers[id] == "" || ck.gidGetShard(gid) == -1 {
+			// ask controler for the latest configuration.
+			ck.config = ck.sm.Query(-1)
+			continue
+		}
+
+		//这俩步是为了找到对应gid的shard，根据shard生成一个key,保证get可以获取对应的group上
+		shard := ck.gidGetShard(gid)
+		key := shardtoKey(shard)
+
+		srv := ck.make_end(servers[id])
+		var reply GetReply
+		args := GetArgs{}
+		args.Key = key
+		ok := srv.Call("ShardKV.Get", &args, &reply)
+		if !ok {
+			// return ErrSendError//不需要，如果网络不可达就继续重试，直到超时，防止测试中会出现节点活跃但是sendError的情况
+			continue
+		}
+		return reply.Err
 	}
-	srv := ck.make_end(servers[id])
-	var reply GetReply
-	args := GetArgs{}
-	args.Key = "?"
-	ok := srv.Call("ShardKV.Get", &args, &reply)
-	return ok
+}
+
+func (ck *Clerk) gidGetShard(gid int) int {
+	for shard, s_gid := range ck.config.Shards {
+		if s_gid == gid {
+			return shard
+		}
+	}
+	//shard 中没有对应的gid
+	return -1
 }

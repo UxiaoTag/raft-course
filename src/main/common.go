@@ -15,6 +15,9 @@ const (
 	OpQuery
 	OpJoin
 	OpLeave
+	OpStart
+	OpShutdown
+	OpCheckNode
 )
 
 // use for put/Append
@@ -28,6 +31,13 @@ type PostData struct {
 type ConfigData struct {
 	Num int    `json:"Num"`
 	Op  string `json:"Op"`
+}
+
+// use for start/shutdown/checknode
+type LifeData struct {
+	Gid int    `json:"Gid"`
+	Id  int    `json:"Id"`
+	Op  string `json:"Op"` // 操作类型标识
 }
 
 func key2shard(key string) int {
@@ -102,6 +112,21 @@ func (data *ConfigData) getOpType() OpType {
 		op = OpJoin
 	case "Leave":
 		op = OpLeave
+	default:
+		panic("unkown op,It sould be in here")
+	}
+	return op
+}
+
+func (data *LifeData) getOpType() OpType {
+	var op OpType
+	switch data.Op {
+	case "Start":
+		op = OpStart
+	case "Shutdown":
+		op = OpShutdown
+	case "CheckNode":
+		op = OpCheckNode
 	default:
 		panic("unkown op,It sould be in here")
 	}
