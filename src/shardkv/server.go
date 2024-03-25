@@ -7,6 +7,7 @@ import (
 	"course/raft"
 	"course/shardctrler"
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -133,6 +134,52 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}()
 }
 
+func (kv *ShardKV) GetAll(args *GetAllArgs, reply *GetAllReply) {
+	// Your code here.
+	//判断是否是负责的分片，否则直接返回
+	kv.mu.Lock()
+	onekey := shardtoKey(args.Shard)
+	if !kv.matchGroup(onekey) {
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+
+	key := strconv.Itoa(args.Shard)
+	index, _, isLeader := kv.rf.Start(RaftCommand{
+		CmdType: ClientOpertion,
+		Data: Op{
+			Key:    key,
+			OpType: OpGetAll,
+		},
+	})
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	//等待结果
+	kv.mu.Lock()
+	notifyCh := kv.getNotifyChannel(index)
+	kv.mu.Unlock()
+
+	select {
+	case result := <-notifyCh:
+		//特殊处理
+		reply.Value = result.Shard
+		reply.Err = result.Err
+		//该处time.After()返回一个通道，这个通道将在指定的时间后发送一个值（通常是nil），然后关闭。当通道关闭时，select语句中的相应case分支会被执行。所以这句话就是一个计时器
+		// case <-time.After(ClientRequsetTimeout):
+		// 	reply.Err = ErrTimeout
+	}
+	//异步删除通知的通道，因为是index产生的，所以通道唯一，用完要删
+	go func() {
+		kv.mu.Lock()
+		kv.removeNotifyChannel(index)
+		kv.mu.Unlock()
+	}()
+}
+
 // the tester calls Kill() when a ShardKV instance won't
 // be needed again. you are not required to do anything
 // in Kill(), but it might be convenient to (for example)
@@ -221,6 +268,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 func (kv *ShardKV) applyToMemoryKVStateMachine(op Op) *OpReply {
 	var value string
 	var Err Err
+	var Shard map[string]string
 	shardid := key2shard(op.Key)
 	switch op.OpType {
 	case OpGet:
@@ -229,6 +277,14 @@ func (kv *ShardKV) applyToMemoryKVStateMachine(op Op) *OpReply {
 		Err = kv.shards[shardid].Put(op.Key, op.Value)
 	case OpAppend:
 		Err = kv.shards[shardid].Append(op.Key, op.Value)
+	case OpGetAll:
+		shardId, err := strconv.Atoi(op.Key)
+		if err != nil {
+			panic("Atoi error string->int")
+		}
+		Shard = kv.shards[shardId].copyData()
+		Err = OK
+		return &OpReply{Shard: Shard, Err: Err}
 	}
 	return &OpReply{Value: value, Err: Err}
 }

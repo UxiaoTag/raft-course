@@ -56,6 +56,14 @@ type GetReply struct {
 	Value string
 }
 
+type GetAllArgs struct {
+	Shard int
+}
+type GetAllReply struct {
+	Err   Err
+	Value map[string]string
+}
+
 const (
 	ClientRequsetTimeout = 500 * time.Millisecond
 	FetchConfigIntval    = 100 * time.Millisecond
@@ -85,6 +93,8 @@ type Op struct {
 type OpReply struct {
 	Err   Err
 	Value string
+	//use for getAll
+	Shard map[string]string
 }
 
 type OpType uint8
@@ -93,6 +103,7 @@ const (
 	OpGet    OpType = 0
 	OpPut    OpType = 1
 	OpAppend OpType = 2
+	OpGetAll OpType = 3
 )
 
 func getOpType(str string) OpType {
@@ -178,6 +189,7 @@ func key2shard(key string) int {
 	return shard
 }
 
+// shard生成一个对应shard的key,任意的
 func shardtoKey(shard int) string {
 	// Ensure the shard index is non-negative
 	if shard < 0 {

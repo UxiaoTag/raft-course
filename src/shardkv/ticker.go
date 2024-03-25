@@ -1,6 +1,7 @@
 package shardkv
 
 import (
+	"strconv"
 	"sync"
 	"time"
 )
@@ -215,7 +216,17 @@ func (kv *ShardKV) DeleteShardData(args *ShardOperationArgs, reply *ShardOperati
 }
 
 func (kv *ShardKV) applyClientOp(op Op) *OpReply {
-	if kv.matchGroup(op.Key) {
+	var key string
+	if op.OpType == OpGetAll {
+		shard, err := strconv.Atoi(op.Key)
+		if err != nil {
+			panic("Atoi Error String->int")
+		}
+		key = shardtoKey(shard)
+	} else {
+		key = op.Key
+	}
+	if kv.matchGroup(key) {
 		var Reply *OpReply
 		//如果该命令不是get且返回过
 		if op.OpType != OpGet && kv.requestDuplicated(op.ClientId, op.SeqId) {
@@ -227,7 +238,7 @@ func (kv *ShardKV) applyClientOp(op Op) *OpReply {
 			//你肯定是返回kv.duplicateTable[op.clientId].Reply，但是此时你的kv.duplicateTable[op.clientId].seqId其实应该==10，
 			//也就是你返回的是10的返回结果，虽然我理解这个最重要的是不执行，且返回估计就是ok，没什么区别但是还是不理解。
 			Reply = kv.applyToMemoryKVStateMachine(op)
-			if op.OpType != OpGet {
+			if op.OpType != OpGet && op.OpType != OpGetAll {
 				// println("me:", kv.rf.GetMe(), "push client:", op.ClientId, ",sendSeqId", op.SeqId, " kv.duplicateTable[op.ClientId].nowSeqId", kv.duplicateTable[op.ClientId].SeqId, " ,opType", op.OpType, " ,opkeyvlaue", op.Key, op.Value)
 				kv.duplicateTable[op.ClientId] = lastOperationInfo{
 					SeqId: op.SeqId,

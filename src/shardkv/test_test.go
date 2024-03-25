@@ -962,4 +962,38 @@ func TestMyTest(t *testing.T) {
 	if ok == OK {
 		fmt.Print("nice")
 	}
+
+	ck.Get("12")
+	ck.Put("82", "123")
+	ck.Put("62", "2331")
+	ck.Put("52", "1234")
+	ck.Put("245", "21321")
+	if ck.Get("82") != "123" {
+		panic("Error")
+	}
+	if ck.Get("62") != "2331" {
+		panic("Error")
+	}
+	if ck.Get("52") != "1234" {
+		panic("Error")
+	}
+	if ck.Get("245") != "21321" {
+		panic("Error")
+	}
+	// 假设 GetAll 方法返回的是 map[string]string 类型的数据
+	shard := ck.GetAll(0)
+	shard2 := ck.GetAll(1)
+	shard3 := ck.GetAll(2)
+	shard4 := ck.GetAll(3)
+	shard5 := ck.GetAll(4)
+	shard6 := ck.GetAll(5)
+
+	// 遍历所有分片
+	for shardIndex, shard := range [6]map[string]string{shard, shard2, shard3, shard4, shard5, shard6} {
+		fmt.Printf("Shard %d:\n", shardIndex)
+		for key, value := range shard {
+			fmt.Printf("key: %s, value: %s\n", key, value)
+		}
+		fmt.Println("--------------------") // 打印分隔线，以便区分不同分片的输出
+	}
 }
