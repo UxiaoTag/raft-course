@@ -4,6 +4,7 @@ import (
 	"course/shardkv"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -155,6 +156,16 @@ func main() {
 		ctx.JSON(http.StatusOK, gidToShards)
 	})
 	router.GET("/CheckNode", CheckNoedFunc)
+	router.GET("/GetAll", func(ctx *gin.Context) {
+		shardstr := ctx.Query("shard")
+		shard, err := strconv.Atoi(shardstr)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		ShardKV := ck.GetAll(shard)
+		ctx.JSON(http.StatusOK, ShardKV)
+	})
 	router.POST("/PutOrAppend", PutOrAppenfunc)
 	router.POST("/JoinOrLeave", JoinOrLeaveFunc)
 	//尽量不要使用该功能，关了请立刻开回去，不然坏机了
