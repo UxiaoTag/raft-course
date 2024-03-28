@@ -52,6 +52,9 @@ func key2shard(key string) int {
 func MakegidToShards(config shardctrler.Config) map[int][]int {
 	gidToShards := make(map[int][]int)
 
+	if len(config.Groups) == 0 {
+		return nil
+	}
 	for gid := range config.Groups {
 		gidToShards[gid] = make([]int, 0)
 	}

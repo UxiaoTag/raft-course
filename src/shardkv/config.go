@@ -441,6 +441,10 @@ func (cfg *config) Cleanup() {
 	cfg.checkTimeout()
 }
 
+func (cfg *config) Join(gi int) {
+	cfg.joinm([]int{gi})
+}
+
 func (cfg *config) Joinm(gis []int) {
 	m := make(map[int][]string, len(gis))
 	for _, g := range gis {

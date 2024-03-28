@@ -21,6 +21,7 @@ func main() {
 	cfg.Joinm(gis)
 	//make shardKVClient()
 	ck := cfg.MakeClient()
+	mck := cfg.Getmck()
 	fmt.Println("use for shardkv,Client ID:", ck.GetClientId())
 
 	//init Getfunc
@@ -83,20 +84,16 @@ func main() {
 				ctx.JSON(http.StatusBadRequest, gin.H{"error": "id not in group"})
 				return
 			}
-			//获取控制台客户端
-			// mck := cfg.Getmck()
-			cfg.Joinm([]int{data.Num})
+			cfg.Join(data.Num)
 		case OpLeave:
 			if !contains(gis, data.Num) {
 				ctx.JSON(http.StatusBadRequest, gin.H{"error": "id not in group"})
 				return
 			}
-			//获取控制台客户端
-			// mck := cfg.Getmck()
 			cfg.Leave(data.Num)
 		}
 		//执行完后返回当前配置：
-		changeConfig := cfg.Getmck().Query(-1)
+		changeConfig := mck.Query(-1)
 		ctx.JSON(http.StatusOK, changeConfig)
 	}
 
@@ -152,7 +149,7 @@ func main() {
 
 	router.GET("/Get", getFunc)
 	router.GET("/GetConfig", func(ctx *gin.Context) {
-		nowConfig := cfg.Getmck().Query(-1)
+		nowConfig := mck.Query(-1)
 		ctx.JSON(http.StatusOK, nowConfig)
 	})
 	router.GET("/GetLeader", func(ctx *gin.Context) {
@@ -160,7 +157,7 @@ func main() {
 		ctx.JSON(http.StatusOK, Leaderids)
 	})
 	router.GET("/MakegidToShards", func(ctx *gin.Context) {
-		gidToShards := MakegidToShards(cfg.Getmck().Query(-1))
+		gidToShards := MakegidToShards(mck.Query(-1))
 		ctx.JSON(http.StatusOK, gidToShards)
 	})
 	router.GET("/CheckNode", CheckNoedFunc)
