@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -141,6 +142,13 @@ func main() {
 	}
 
 	router := gin.Default()
+
+	// 启用 CORS
+	config := cors.DefaultConfig()
+	config.AllowAllOrigins = true          // 允许所有源
+	config.AddAllowHeaders("content-type") // 允许请求头
+
+	router.Use(cors.New(config))
 
 	router.GET("/Get", getFunc)
 	router.GET("/GetConfig", func(ctx *gin.Context) {
