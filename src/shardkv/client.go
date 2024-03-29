@@ -9,6 +9,7 @@ package shardkv
 //
 
 import (
+	"context"
 	"course/labrpc"
 	"course/shardctrler"
 	"crypto/rand"
@@ -205,6 +206,30 @@ func (ck *Clerk) GetClientId() int64 {
 }
 
 func (ck *Clerk) GetLeader() map[int]int {
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+
+	defer cancel()
+	if ctx.Err() == context.DeadlineExceeded {
+		// 处理超时情况，超时我们就返回旧的
+		return ck.leaderIds
+	}
+	if len(ck.config.Groups) == 0 {
+		//考虑到有可能会出现刚开导致ck.config.Groups还未加载出来
+		timeoutDuration := 50 * time.Millisecond // 设置休息时间为50毫秒
+		time.Sleep(timeoutDuration)
+		ck.config = ck.sm.Query(-1)
+	}
+	for gid, _ := range ck.config.Groups {
+		shard := ck.gidGetShard(gid)
+		if shard == -1 {
+			panic("error gid -> shard error")
+		}
+		key := shardtoKey(shard)
+		//用这个get方法寻找key的方式更新Leader
+		ck.Get(key)
+	}
+
 	return ck.leaderIds
 }
 

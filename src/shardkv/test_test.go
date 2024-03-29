@@ -996,4 +996,67 @@ func TestMyTest(t *testing.T) {
 		}
 		fmt.Println("--------------------") // 打印分隔线，以便区分不同分片的输出
 	}
+
+	// 初始化StatusRequest
+	statusMap := make(map[int]map[int]bool)
+	// 获取配置
+	config := cfg.mck.Query(-1)
+	// 遍历配置中的所有组
+	for gid, servers := range config.Groups {
+		// 初始化每个组的节点状态
+		statusMap[gid] = make(map[int]bool)
+		// 遍历组中的所有服务器
+		for index, _ := range servers {
+			// 检查节点状态
+			err := ck.CheckNode(gid, index)
+			if err == ErrNoKey || err == ErrWrongLeader || err == OK {
+				// 如果节点返回OK，找不到key，不是Leader，我们都认为节点存活标记为true
+				statusMap[gid][index] = true
+			} else {
+				// 否则，节点状态正常，标记为false
+				statusMap[gid][index] = false
+			}
+		}
+	}
+
+	printStatusMap(statusMap)
+
+	cfg.ShutdownShardKvServer(0, 0)
+	cfg.ShutdownShardKvServer(1, 0)
+	cfg.ShutdownShardKvServer(2, 2)
+	// cfg.ShutdownShardKvServer(1, 4)
+	cfg.ShutdownShardKvServer(0, 2)
+
+	config = cfg.mck.Query(-1)
+	// 遍历配置中的所有组
+	for gid, servers := range config.Groups {
+		// 初始化每个组的节点状态
+		statusMap[gid] = make(map[int]bool)
+		// 遍历组中的所有服务器
+		for index, _ := range servers {
+			// 检查节点状态
+			err := ck.CheckNode(gid, index)
+			if err == ErrNoKey || err == ErrWrongLeader || err == OK {
+				// 如果节点返回OK，找不到key，不是Leader，我们都认为节点存活标记为true
+				statusMap[gid][index] = true
+			} else {
+				// 否则，节点状态正常，标记为false
+				statusMap[gid][index] = false
+			}
+		}
+	}
+
+	printStatusMap(statusMap)
+
+}
+
+// 打印statusMap的内容
+func printStatusMap(statusMap map[int]map[int]bool) {
+	for gid, servers := range statusMap {
+		fmt.Printf("Group ID: %d\n", gid)
+		for id, status := range servers {
+			fmt.Printf("  Server Index: %d, Status: %v\n", id, status)
+		}
+		fmt.Println("--------------------") // 打印分隔线，以便区分不同组的输出
+	}
 }

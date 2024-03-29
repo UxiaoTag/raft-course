@@ -138,6 +138,33 @@ func main() {
 		})
 	}
 
+	//init CheckAllNodefunc
+	CheckAllNoedFunc := func(ctx *gin.Context) {
+		// 初始化StatusRequest
+		statusMap := make(map[int]map[int]bool)
+		// 获取配置
+		config := mck.Query(-1)
+		// 遍历配置中的所有组
+		for gid, servers := range config.Groups {
+			// 初始化每个组的节点状态
+			statusMap[gid] = make(map[int]bool)
+			// 遍历组中的所有服务器
+			for index, _ := range servers {
+				// 检查节点状态
+				err := ck.CheckNode(gid, index)
+				if err == shardkv.ErrTimeout {
+					// 节点状态超时，标记为false
+					statusMap[gid][index] = false
+				} else {
+					// 如果节点返回OK，找不到key，不是Leader，我们都认为节点存活标记为true，有些不应该发生的情况比如errgroup之类的
+					statusMap[gid][index] = true
+
+				}
+			}
+		}
+		ctx.JSON(http.StatusOK, statusMap)
+	}
+
 	router := gin.Default()
 
 	// 启用 CORS
@@ -161,6 +188,7 @@ func main() {
 		ctx.JSON(http.StatusOK, gidToShards)
 	})
 	router.GET("/CheckNode", CheckNoedFunc)
+	router.GET("/CheckAllNode", CheckAllNoedFunc)
 	router.GET("/GetAll", func(ctx *gin.Context) {
 		shardstr := ctx.Query("shard")
 		shard, err := strconv.Atoi(shardstr)
