@@ -201,6 +201,44 @@ func (ck *Clerk) GetAll(Shard int) map[string]string {
 	}
 }
 
+func (ck *Clerk) GetSize(Shard int) int {
+	args := GetAllArgs{}
+	args.Shard = Shard
+	for {
+		gid := ck.config.Shards[Shard]
+		if servers, ok := ck.config.Groups[gid]; ok {
+			// try each server for the shard.
+			if _, exist := ck.leaderIds[gid]; !exist {
+				ck.leaderIds[gid] = 0
+			}
+			oldLeaderId := ck.leaderIds[gid]
+
+			for {
+				srv := ck.make_end(servers[ck.leaderIds[gid]])
+				var reply GetAllReply
+				ok := srv.Call("ShardKV.GetSize", &args, &reply)
+				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+					return reply.Size
+				}
+				if ok && (reply.Err == ErrWrongGroup) {
+					break
+				}
+				// ... not ok, or ErrWrongLeader
+				if !ok || reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
+					ck.leaderIds[gid] = (ck.leaderIds[gid] + 1) % len(servers)
+					if ck.leaderIds[gid] == oldLeaderId {
+						break
+					}
+					continue
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+		// ask controler for the latest configuration.
+		ck.config = ck.sm.Query(-1)
+	}
+}
+
 func (ck *Clerk) GetClientId() int64 {
 	return ck.clientId
 }

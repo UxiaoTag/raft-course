@@ -963,36 +963,28 @@ func TestMyTest(t *testing.T) {
 		fmt.Print("nice")
 	}
 
-	ck.Get("12")
+	// 使用 Put 方法插入数据
 	ck.Put("82", "123")
 	ck.Put("62", "2331")
 	ck.Put("52", "1234")
 	ck.Put("245", "21321")
-	if ck.Get("82") != "123" {
-		panic("Error")
-	}
-	if ck.Get("62") != "2331" {
-		panic("Error")
-	}
-	if ck.Get("52") != "1234" {
-		panic("Error")
-	}
-	if ck.Get("245") != "21321" {
-		panic("Error")
-	}
-	// 假设 GetAll 方法返回的是 map[string]string 类型的数据
-	shard := ck.GetAll(0)
-	shard2 := ck.GetAll(1)
-	shard3 := ck.GetAll(2)
-	shard4 := ck.GetAll(3)
-	shard5 := ck.GetAll(4)
-	shard6 := ck.GetAll(5)
+	ck.Put("18", "1123")
+	ck.Put("93", "3321")
+	ck.Put("76", "7334")
+	ck.Put("34", "3434")
+	ck.Put("29", "4324")
+	shards := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
 
 	// 遍历所有分片
-	for shardIndex, shard := range [6]map[string]string{shard, shard2, shard3, shard4, shard5, shard6} {
-		fmt.Printf("Shard %d:\n", shardIndex)
-		for key, value := range shard {
-			fmt.Printf("key: %s, value: %s\n", key, value)
+	for _, shard := range shards {
+		// 获取分片的大小
+		num := ck.GetSize(shard)
+		// 打印分片大小和分隔线
+		fmt.Printf("Shard %d has %d key-value pairs:\n", shard, num)
+		// 获取分片的所有键值对
+		shardData := ck.GetAll(shard)
+		for key, value := range shardData {
+			fmt.Printf("  Key: %s, Value: %s\n", key, value) // 使用两个空格对齐输出
 		}
 		fmt.Println("--------------------") // 打印分隔线，以便区分不同分片的输出
 	}

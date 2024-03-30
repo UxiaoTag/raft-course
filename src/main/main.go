@@ -109,13 +109,18 @@ func main() {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Operation type must be Start or Shutdown"})
 			return
 		}
-		switch data.getOpType() {
-		case OpShutdown:
-			cfg.ShutdownShardKvServer(data.Gid, data.Id)
-		case OpStart:
-			cfg.StartShardKvServer(data.Gid, data.Id)
+		config := mck.Query(-1)
+		if servers, ok := config.Groups[data.Gid]; ok && len(servers) > 0 && data.Id >= 0 && data.Id < len(servers) {
+			switch data.getOpType() {
+			case OpShutdown:
+				cfg.ShutdownShardKvServer(data.Gid-100, data.Id)
+			case OpStart:
+				cfg.StartShardKvServer(data.Gid-100, data.Id)
+			}
+			ctx.JSON(http.StatusOK, data)
+			return
 		}
-		ctx.JSON(http.StatusOK, data)
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Gid Or Id Error"})
 	}
 
 	//init CheckNodefunc
@@ -198,6 +203,19 @@ func main() {
 		}
 		ShardKV := ck.GetAll(shard)
 		ctx.JSON(http.StatusOK, ShardKV)
+	})
+	router.GET("/GetSize", func(ctx *gin.Context) {
+		shardstr := ctx.Query("shard")
+		shard, err := strconv.Atoi(shardstr)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		lenShard := ck.GetSize(shard)
+		ctx.JSON(http.StatusOK, gin.H{
+			"shard": shardstr,
+			"len":   lenShard,
+		})
 	})
 	router.POST("/PutOrAppend", PutOrAppenfunc)
 	router.POST("/JoinOrLeave", JoinOrLeaveFunc)

@@ -139,6 +139,7 @@ func (kv *ShardKV) GetAll(args *GetAllArgs, reply *GetAllReply) {
 	//判断是否是负责的分片，否则直接返回
 	kv.mu.Lock()
 	onekey := shardtoKey(args.Shard)
+	//这是个笨方法,其实可以直接,毕设时间紧急，可优化TODO：if kv.config.shard[args.Shard]!=kv.gid
 	if !kv.matchGroup(onekey) {
 		reply.Err = ErrWrongGroup
 		kv.mu.Unlock()
@@ -146,11 +147,10 @@ func (kv *ShardKV) GetAll(args *GetAllArgs, reply *GetAllReply) {
 	}
 	kv.mu.Unlock()
 
-	key := strconv.Itoa(args.Shard)
 	index, _, isLeader := kv.rf.Start(RaftCommand{
 		CmdType: ClientOpertion,
 		Data: Op{
-			Key:    key,
+			Key:    onekey,
 			OpType: OpGetAll,
 		},
 	})
@@ -167,6 +167,56 @@ func (kv *ShardKV) GetAll(args *GetAllArgs, reply *GetAllReply) {
 	case result := <-notifyCh:
 		//特殊处理
 		reply.Value = result.Shard
+		reply.Err = result.Err
+		//该处time.After()返回一个通道，这个通道将在指定的时间后发送一个值（通常是nil），然后关闭。当通道关闭时，select语句中的相应case分支会被执行。所以这句话就是一个计时器
+		// case <-time.After(ClientRequsetTimeout):
+		// 	reply.Err = ErrTimeout
+	}
+	//异步删除通知的通道，因为是index产生的，所以通道唯一，用完要删
+	go func() {
+		kv.mu.Lock()
+		kv.removeNotifyChannel(index)
+		kv.mu.Unlock()
+	}()
+}
+
+func (kv *ShardKV) GetSize(args *GetAllArgs, reply *GetAllReply) {
+	// Your code here.
+	//判断是否是负责的分片，否则直接返回
+	kv.mu.Lock()
+	//这是个笨方法,其实可以直接,毕设时间紧急，可优化TODO：if kv.config.shard[args.Shard]!=kv.gid
+	onekey := shardtoKey(args.Shard)
+	if !kv.matchGroup(onekey) {
+		reply.Err = ErrWrongGroup
+		kv.mu.Unlock()
+		return
+	}
+	kv.mu.Unlock()
+
+	index, _, isLeader := kv.rf.Start(RaftCommand{
+		CmdType: ClientOpertion,
+		Data: Op{
+			Key:    onekey,
+			OpType: OpGetSize,
+		},
+	})
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+	//等待结果
+	kv.mu.Lock()
+	notifyCh := kv.getNotifyChannel(index)
+	kv.mu.Unlock()
+
+	select {
+	case result := <-notifyCh:
+		//特殊处理
+		Size, err := strconv.Atoi(result.Value)
+		if err != nil {
+			panic("Error string->int errro")
+		}
+		reply.Size = Size
 		reply.Err = result.Err
 		//该处time.After()返回一个通道，这个通道将在指定的时间后发送一个值（通常是nil），然后关闭。当通道关闭时，select语句中的相应case分支会被执行。所以这句话就是一个计时器
 		// case <-time.After(ClientRequsetTimeout):
@@ -278,13 +328,13 @@ func (kv *ShardKV) applyToMemoryKVStateMachine(op Op) *OpReply {
 	case OpAppend:
 		Err = kv.shards[shardid].Append(op.Key, op.Value)
 	case OpGetAll:
-		shardId, err := strconv.Atoi(op.Key)
-		if err != nil {
-			panic("Atoi error string->int")
-		}
-		Shard = kv.shards[shardId].copyData()
+		Shard = kv.shards[shardid].copyData()
 		Err = OK
 		return &OpReply{Shard: Shard, Err: Err}
+	case OpGetSize:
+		size := kv.shards[shardid].GetSize()
+		value = strconv.Itoa(size)
+		Err = OK
 	}
 	return &OpReply{Value: value, Err: Err}
 }

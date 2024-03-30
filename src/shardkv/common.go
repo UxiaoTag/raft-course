@@ -62,6 +62,8 @@ type GetAllArgs struct {
 type GetAllReply struct {
 	Err   Err
 	Value map[string]string
+	//use for GetSize
+	Size int
 }
 
 const (
@@ -100,10 +102,11 @@ type OpReply struct {
 type OpType uint8
 
 const (
-	OpGet    OpType = 0
-	OpPut    OpType = 1
-	OpAppend OpType = 2
-	OpGetAll OpType = 3
+	OpGet     OpType = 0
+	OpPut     OpType = 1
+	OpAppend  OpType = 2
+	OpGetAll  OpType = 3
+	OpGetSize OpType = 4
 )
 
 func getOpType(str string) OpType {

@@ -37,3 +37,7 @@ func (mkv *MemoryKVStateMachine) copyData() map[string]string {
 	}
 	return newKV
 }
+
+func (mkv *MemoryKVStateMachine) GetSize() int {
+	return len(mkv.KV)
+}
