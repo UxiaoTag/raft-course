@@ -72,8 +72,19 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 func (ck *Clerk) Get(key string) string {
 	args := GetArgs{}
 	args.Key = key
-
+	//这里测试出了一个问题，就是当我leave之前做了一个操作让其他server无法连接之后，会出现一个问题
+	//具体情况是我shutdown掉大部分节点导致group不可用，然后我leave掉group，但是他还在试之前已经坏掉的group，直接导致他无法正常执行完所有内容，就会被迫timeout
+	//但每次get都重新获取一次请求太慢了，做一个updateconfig方法，用于手动update client的config。
+	//再次测试发现问题，就是当你无论怎么操作，shutdown掉大部分节点之后再leave，因为该group会无限循环选主导致分片无法进行迁移，所以无论如何访问都会一直返回ErrGroup
+	//这个问题目前解决不了
+	timeoutchan := time.After(ClientTimeout)
 	for {
+		select {
+		case <-timeoutchan:
+			return ErrTimeout
+		default:
+			//继续执行，不用管
+		}
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
@@ -111,7 +122,8 @@ func (ck *Clerk) Get(key string) string {
 
 // PutAppend shared by Put and Append.
 // You will have to modify this function.
-func (ck *Clerk) PutAppend(key string, value string, op string) {
+// add Return
+func (ck *Clerk) PutAppend(key string, value string, op string) Err {
 	args := PutAppendArgs{
 		ClientId: ck.clientId,
 		SeqId:    ck.seqId,
@@ -119,8 +131,15 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.Key = key
 	args.Value = value
 	args.Op = op
+	timeoutchan := time.After(ClientTimeout)
 
 	for {
+		select {
+		case <-timeoutchan:
+			return ErrTimeout
+		default:
+			//继续执行，不用管
+		}
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
@@ -135,7 +154,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
 					ck.seqId++
-					return
+					return reply.Err
 				}
 				if ok && reply.Err == ErrWrongGroup {
 					break
@@ -156,17 +175,24 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	}
 }
 
-func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+func (ck *Clerk) Put(key string, value string) Err {
+	return ck.PutAppend(key, value, "Put")
 }
-func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+func (ck *Clerk) Append(key string, value string) Err {
+	return ck.PutAppend(key, value, "Append")
 }
 
 func (ck *Clerk) GetAll(Shard int) map[string]string {
 	args := GetAllArgs{}
 	args.Shard = Shard
+	timeoutchan := time.After(ClientTimeout * 5)
 	for {
+		select {
+		case <-timeoutchan:
+			return nil
+		default:
+			//继续执行，不用管
+		}
 		gid := ck.config.Shards[Shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
 			// try each server for the shard.
@@ -204,7 +230,14 @@ func (ck *Clerk) GetAll(Shard int) map[string]string {
 func (ck *Clerk) GetSize(Shard int) int {
 	args := GetAllArgs{}
 	args.Shard = Shard
+	timeoutchan := time.After(ClientTimeout)
 	for {
+		select {
+		case <-timeoutchan:
+			return 0
+		default:
+			//继续执行，不用管
+		}
 		gid := ck.config.Shards[Shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
 			// try each server for the shard.
@@ -317,4 +350,8 @@ func (ck *Clerk) gidGetShard(gid int) int {
 	}
 	//shard 中没有对应的gid
 	return -1
+}
+
+func (ck *Clerk) UpdateConfig() {
+	ck.config = ck.sm.Query(-1)
 }

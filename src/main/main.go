@@ -13,7 +13,7 @@ import (
 func main() {
 
 	//init servers
-	cfg := shardkv.Makeconfig(5, true, 100)
+	cfg := Makeconfig(5, true, 100)
 	defer cfg.Cleanup()
 
 	//join shardKVServer
@@ -31,6 +31,10 @@ func main() {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Missing key parameter"})
 		} else {
 			value := ck.Get(key)
+			if value == "ErrTimeout" {
+				ctx.JSON(http.StatusRequestTimeout, gin.H{"error": "Get operation timed out"})
+				return
+			}
 			ctx.JSON(http.StatusOK, gin.H{
 				"key":   key,
 				"value": value,
@@ -52,11 +56,16 @@ func main() {
 			ctx.JSON(http.StatusBadRequest, gin.H{"error": "No Put or Append OP"})
 			return
 		}
+		var ok shardkv.Err
 		switch data.getOpType() {
 		case OpPut:
-			ck.Put(data.Key, data.Value)
+			ok = ck.Put(data.Key, data.Value)
 		case OpAppend:
-			ck.Append(data.Key, data.Value)
+			ok = ck.Append(data.Key, data.Value)
+		}
+		if ok == shardkv.ErrTimeout {
+			ctx.JSON(http.StatusRequestTimeout, gin.H{"error": "PutOrAppend operation timed out"})
+			return
 		}
 		ctx.JSON(http.StatusOK, gin.H{
 			"key":   data.Key,

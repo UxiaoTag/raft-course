@@ -1014,8 +1014,8 @@ func TestMyTest(t *testing.T) {
 	printStatusMap(statusMap)
 
 	cfg.ShutdownShardKvServer(0, 0)
-	cfg.ShutdownShardKvServer(1, 0)
-	cfg.ShutdownShardKvServer(2, 2)
+	cfg.ShutdownShardKvServer(0, 1)
+	cfg.ShutdownShardKvServer(0, 3)
 	// cfg.ShutdownShardKvServer(1, 4)
 	cfg.ShutdownShardKvServer(0, 2)
 

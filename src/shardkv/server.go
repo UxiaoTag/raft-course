@@ -393,3 +393,8 @@ func (kv *ShardKV) restoreSnapShot(snapshot []byte) {
 	}
 	kv.prevConfig = prevConfig
 }
+
+// use for config
+func (shardkv *ShardKV) Getrf() *raft.Raft {
+	return shardkv.rf
+}

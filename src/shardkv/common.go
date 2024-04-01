@@ -71,6 +71,8 @@ const (
 	FetchConfigIntval    = 100 * time.Millisecond
 	shardMigrationIntval = 50 * time.Millisecond
 	shardGCIntval        = 50 * time.Millisecond
+	//client use
+	ClientTimeout = 5000 * time.Millisecond
 )
 const Debug = false
 
