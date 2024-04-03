@@ -354,7 +354,7 @@ func (kv *ShardKV) removeNotifyChannel(index int) {
 func (kv *ShardKV) makeSnapShot(index int) {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	e.Encode(kv.shards)
+	// e.Encode(kv.shards)
 	e.Encode(kv.duplicateTable)
 	e.Encode(kv.currentConfig)
 	e.Encode(kv.prevConfig)
@@ -365,21 +365,23 @@ func (kv *ShardKV) restoreSnapShot(snapshot []byte) {
 	if len(snapshot) == 0 {
 		for i := 0; i < shardctrler.NShards; i++ {
 			if _, ok := kv.shards[i]; !ok {
-				kv.shards[i] = NewMemoryKVStateMachine()
+				kv.shards[i] = NewMemoryKVStateMachine(i, kv.me, kv.gid)
 			}
 		}
 		return
 	}
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
-	var shards map[int]*MemoryKVStateMachine
+	// var shards map[int]*MemoryKVStateMachine
 	var dupTable map[int64]lastOperationInfo
 	var currentConfig shardctrler.Config
 	var prevConfig shardctrler.Config
-	if err := d.Decode(&shards); err != nil {
-		panic(fmt.Sprintf("restore MemoryKVStateMachine Error %v", err))
-	}
-	kv.shards = shards
+	//这里不再需要对shard进行持久化，我们有文件，直接读取文件即可
+	//当然其实还是要的，要读状态，这里偷懒了，先不搞
+	// if err := d.Decode(&shards); err != nil {
+	// 	panic(fmt.Sprintf("restore MemoryKVStateMachine Error %v", err))
+	// }
+	// kv.shards = shards
 	if err := d.Decode(&dupTable); err != nil {
 		panic(fmt.Sprintf("restore duplicateTable Error %v", err))
 	}

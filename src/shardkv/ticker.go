@@ -41,6 +41,13 @@ func (kv *ShardKV) applyTicker() {
 					//这里倒是出过一个的问题，panic: 57 is out of [57, 56]
 					// println("%d>=%d,sould be snapshot", kv.rf.GetRaftStateSize(), kv.maxraftstate)
 					kv.makeSnapShot(message.CommandIndex)
+					// //做完SnapShot顺便Merge
+					// for shardid := range kv.shards {
+					// 	id := shardid
+					// 	go func() {
+					// 		kv.shards[id].KV.Merge()
+					// 	}()
+					// }
 				}
 				kv.mu.Unlock()
 			} else if message.SnapshotValid {

@@ -1,10 +1,12 @@
 package minibitcask
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type MiniBitcask struct {
@@ -218,6 +220,59 @@ func (db *MiniBitcask) loadIndexesFromFile() {
 
 	}
 	return
+}
+
+// GetKey方法，用于DATACopy时能够正常取数据
+func (db *MiniBitcask) GetKey() []string {
+	var allkey []string
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	for key := range db.indexes {
+		allkey = append(allkey, key)
+	}
+	return allkey
+}
+
+// GetSize方法
+func (db *MiniBitcask) GetSize() int {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return len(db.indexes)
+}
+
+// ClearAll方法,用于分片迁移完成之后进行清空
+func (db *MiniBitcask) ClearAll() {
+	db.mu.Lock()
+
+	//异步进行
+	go func() {
+		defer db.mu.Unlock() // 在goroutine结束时释放锁
+
+		// 关闭数据文件
+		if err := db.dbFile.File.Close(); err != nil {
+			fmt.Printf("Error closing db file: %v\n", err)
+			return
+		}
+
+		// 等待一段时间以确保文件句柄被释放
+		time.Sleep(500 * time.Millisecond)
+
+		// 删除数据文件,我尝试删除如果编译器正在打开该功能，也可能出现这种错误，所以我决定用清空代替删除
+		dbfilename := db.dbFile.File.Name()
+		if err := os.Truncate(dbfilename, 0); err != nil {
+			fmt.Printf("Error truncating db file: %v\n", err)
+			return // 如果清空文件失败，退出函数
+		}
+		//清空索引
+		db.indexes = make(map[string]int64)
+	}()
+}
+
+// GetOffset方法，用于判断是否需要Merge
+func (db *MiniBitcask) GetOffset() int64 {
+	return db.dbFile.Offset
 }
 
 // Close 关闭 db 实例

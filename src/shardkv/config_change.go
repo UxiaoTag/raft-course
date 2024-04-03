@@ -86,7 +86,8 @@ func (kv *ShardKV) applyShardMingration(reply *ShardOperationReply) *OpReply {
 			if shard.Status == MoveIn {
 				// kv.shards[shardId].KV = shardData
 				for k, v := range shardData {
-					shard.KV[k] = v
+					// shard.KV[k] = v
+					shard.KV.Put([]byte(k), []byte(v))
 				}
 				shard.Status = GC
 			} else {
@@ -101,6 +102,7 @@ func (kv *ShardKV) applyShardMingration(reply *ShardOperationReply) *OpReply {
 				kv.duplicateTable[clientId] = table
 			}
 		}
+		return &OpReply{Err: OK}
 	}
 	return &OpReply{Err: ErrWrongConfig}
 }
@@ -112,7 +114,10 @@ func (kv *ShardKV) applyShardGC(shardInfo *ShardOperationArgs) *OpReply {
 			if shard.Status == GC {
 				shard.Status = Normal
 			} else if shard.Status == MoveOut {
-				kv.shards[shardId] = NewMemoryKVStateMachine()
+				//clear shard
+				kv.shards[shardId].KV.ClearAll()
+				//clear完毕之后从新使用NewMemoryKVStateMachine，会通过open重新创建一个数据库实例，因为文件也删了，会重建数据库
+				kv.shards[shardId] = NewMemoryKVStateMachine(shardId, kv.me, kv.gid)
 			} else {
 				break
 			}

@@ -1,43 +1,67 @@
 package shardkv
 
-//牛逼，go居然没有专门的map的get和put方法，是完全用数组的方式操作的，写的很不习惯
+import (
+	minibitcask "course/mini-bitcask"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
 type MemoryKVStateMachine struct {
-	KV     map[string]string
+	KV     *minibitcask.MiniBitcask
 	Status ShardStatus
 }
 
-func NewMemoryKVStateMachine() *MemoryKVStateMachine {
+func NewMemoryKVStateMachine(shard, me, gid int) *MemoryKVStateMachine {
+	// 获取当前工作目录的绝对路径
+	currentDir, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	pathStr := fmt.Sprintf("%d-%d-%d", gid, me, shard)
+	targetDir := filepath.Join(currentDir, "tmp", "minibitcask"+pathStr)
+	kv, err := minibitcask.Open(targetDir)
+	if err != nil {
+		panic(err)
+	}
 	return &MemoryKVStateMachine{
-		KV:     make(map[string]string),
+		KV:     kv,
 		Status: Normal,
 	}
 }
 
 func (mkv *MemoryKVStateMachine) Get(key string) (string, Err) {
-	if value, ok := mkv.KV[key]; ok {
-		return value, OK
+	valueByte, err := mkv.KV.Get([]byte(key))
+	if err == nil {
+		return string(valueByte), OK
 	}
+	//无论出现任何错误，我们都返回NoKey
 	return "", ErrNoKey
 }
 
 func (mkv *MemoryKVStateMachine) Put(key, value string) Err {
-	mkv.KV[key] = value
+	mkv.KV.Put([]byte(key), []byte(value))
 	return OK
 }
 
 func (mkv *MemoryKVStateMachine) Append(key, value string) Err {
-	mkv.KV[key] += value
+	valueByte, _ := mkv.KV.Get([]byte(key))
+	newValueByte := append(valueByte, []byte(value)...)
+	mkv.KV.Put([]byte(key), newValueByte)
 	return OK
 }
 
 func (mkv *MemoryKVStateMachine) copyData() map[string]string {
 	newKV := make(map[string]string, 0)
-	for k, v := range mkv.KV {
-		newKV[k] = v
+	for _, key := range mkv.KV.GetKey() {
+		valueByte, _ := mkv.KV.Get([]byte(key))
+		newKV[key] = string(valueByte)
 	}
 	return newKV
 }
 
 func (mkv *MemoryKVStateMachine) GetSize() int {
-	return len(mkv.KV)
+	//这方法太慢了
+	// return len(mkv.KV.GetKey())
+	return mkv.KV.GetSize()
 }

@@ -1013,12 +1013,43 @@ func TestMyTest(t *testing.T) {
 
 	printStatusMap(statusMap)
 
-	cfg.ShutdownShardKvServer(0, 0)
-	cfg.ShutdownShardKvServer(0, 1)
-	cfg.ShutdownShardKvServer(0, 3)
-	// cfg.ShutdownShardKvServer(1, 4)
-	cfg.ShutdownShardKvServer(0, 2)
+	cfg.leave(0)
 
+	config = cfg.mck.Query(-1)
+
+	time.Sleep(time.Minute)
+
+	// 遍历所有分片
+	for _, shard := range shards {
+		// 获取分片的大小
+		num := ck.GetSize(shard)
+		// 打印分片大小和分隔线
+		fmt.Printf("Shard %d has %d key-value pairs:\n", shard, num)
+		// 获取分片的所有键值对
+		shardData := ck.GetAll(shard)
+		for key, value := range shardData {
+			fmt.Printf("  Key: %s, Value: %s\n", key, value) // 使用两个空格对齐输出
+		}
+		fmt.Println("--------------------") // 打印分隔线，以便区分不同分片的输出
+	}
+
+	cfg.join(0)
+
+	time.Sleep(time.Minute)
+
+	// 遍历所有分片
+	for _, shard := range shards {
+		// 获取分片的大小
+		num := ck.GetSize(shard)
+		// 打印分片大小和分隔线
+		fmt.Printf("Shard %d has %d key-value pairs:\n", shard, num)
+		// 获取分片的所有键值对
+		shardData := ck.GetAll(shard)
+		for key, value := range shardData {
+			fmt.Printf("  Key: %s, Value: %s\n", key, value) // 使用两个空格对齐输出
+		}
+		fmt.Println("--------------------") // 打印分隔线，以便区分不同分片的输出
+	}
 	config = cfg.mck.Query(-1)
 	// 遍历配置中的所有组
 	for gid, servers := range config.Groups {

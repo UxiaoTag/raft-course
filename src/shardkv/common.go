@@ -178,6 +178,9 @@ type ShardOperationReply struct {
 
 func (kv *ShardKV) matchGroup(Key string) bool {
 	shard := key2shard(Key)
+	if kv.shards == nil || kv.shards[shard] == nil {
+		return false // 指示shards未准备好
+	}
 	ShardStatus := kv.shards[shard].Status
 	return kv.currentConfig.Shards[shard] == kv.gid && (ShardStatus == Normal || ShardStatus == GC)
 }
