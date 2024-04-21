@@ -22,12 +22,14 @@ func (kv *ShardKV) applyTicker() {
 				//取出用户操作
 				command := message.Command.(RaftCommand)
 				var OpReply *OpReply
-				if command.CmdType == ClientOpertion {
+				if command.CmdType == ClientOperation {
 					op := command.Data.(Op)
 					OpReply = kv.applyClientOp(op)
+					LOG(kv.gid, kv.me, DInfo, "Apply "+opTypeString(op.OpType)+" Operation")
 				} else {
 					// config := command.Data.(shardctrler.Config)
 					OpReply = kv.handleConfigChangeMessage(command)
+					LOG(kv.gid, kv.me, DInfo, "Apply "+raftOpTypeString(command.CmdType)+" Operation")
 				}
 
 				//将结果返回到应用
@@ -112,7 +114,7 @@ func (kv *ShardKV) shardMigrationTicker() {
 						//数据拿到了
 						if ok && getShardReply.Err == OK {
 							//用log传递给所有人
-							kv.ConfigCommand(RaftCommand{ShardMingration, getShardReply}, &OpReply{})
+							kv.ConfigCommand(RaftCommand{ShardMigration, getShardReply}, &OpReply{})
 						}
 					}
 				}(kv.prevConfig.Groups[gid], kv.currentConfig.Num, shardIds)

@@ -125,6 +125,23 @@ func getOpType(str string) OpType {
 
 }
 
+func opTypeString(op OpType) string {
+	switch op {
+	case OpGet:
+		return "Get"
+	case OpPut:
+		return "Put"
+	case OpAppend:
+		return "Append"
+	case OpGetAll:
+		return "GetAll"
+	case OpGetSize:
+		return "GetSize"
+	default:
+		return fmt.Sprintf("UnknownOpType(%d)", op)
+	}
+}
+
 type lastOperationInfo struct {
 	SeqId int64
 	Reply *OpReply
@@ -144,9 +161,9 @@ func (op *lastOperationInfo) copyData() lastOperationInfo {
 type RaftOpType uint8
 
 const (
-	ClientOpertion RaftOpType = iota
+	ClientOperation RaftOpType = iota
 	ConfigChange
-	ShardMingration
+	ShardMigration
 	ShardGC
 )
 
@@ -174,6 +191,22 @@ type ShardOperationReply struct {
 	ConfigNum      int
 	ShardData      map[int]map[string]string
 	DuplicateTable map[int64]lastOperationInfo
+}
+
+// raftOpTypeString 将 RaftOpType 转换为对应的字符串
+func raftOpTypeString(op RaftOpType) string {
+	switch op {
+	case ClientOperation:
+		return "ClientOperation"
+	case ConfigChange:
+		return "ConfigChange"
+	case ShardMigration:
+		return "ShardMigration"
+	case ShardGC:
+		return "ShardGC"
+	default:
+		return fmt.Sprintf("UnknownRaftOpType(%d)", op)
+	}
 }
 
 func (kv *ShardKV) matchGroup(Key string) bool {

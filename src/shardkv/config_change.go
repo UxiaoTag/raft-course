@@ -11,6 +11,9 @@ func (kv *ShardKV) ConfigCommand(command RaftCommand, reply *OpReply) {
 		reply.Err = ErrWrongLeader
 		return
 	}
+
+	// 是leader就记录发送日志
+	LOG(kv.gid, kv.me, DInfo, "Insert "+raftOpTypeString(command.CmdType)+" operation")
 	//等待结果
 	kv.mu.Lock()
 	notifyCh := kv.getNotifyChannel(index)
@@ -38,7 +41,7 @@ func (kv *ShardKV) handleConfigChangeMessage(command RaftCommand) *OpReply {
 	case ConfigChange:
 		config := command.Data.(shardctrler.Config)
 		return kv.applyNewConfig(config)
-	case ShardMingration:
+	case ShardMigration:
 		shardData := command.Data.(ShardOperationReply)
 		return kv.applyShardMingration(&shardData)
 	case ShardGC:

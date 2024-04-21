@@ -46,7 +46,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	kv.mu.Unlock()
 
 	index, _, isLeader := kv.rf.Start(RaftCommand{
-		CmdType: ClientOpertion,
+		CmdType: ClientOperation,
 		Data: Op{
 			Key:    args.Key,
 			OpType: OpGet,
@@ -56,6 +56,9 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		reply.Err = ErrWrongLeader
 		return
 	}
+	// 是leader就记录发送日志
+	LOG(kv.gid, kv.me, DInfo, "Insert "+opTypeString(OpGet)+" operation")
+
 	//等待结果
 	kv.mu.Lock()
 	notifyCh := kv.getNotifyChannel(index)
@@ -103,7 +106,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 	//调用raft,请求存储到raft日志并进行同步
 	index, _, isLeader := kv.rf.Start(RaftCommand{
-		CmdType: ClientOpertion,
+		CmdType: ClientOperation,
 		Data: Op{
 			Key:      args.Key,
 			Value:    args.Value,
@@ -116,6 +119,9 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Err = ErrWrongLeader
 		return
 	}
+
+	// 是leader就记录发送日志
+	LOG(kv.gid, kv.me, DInfo, "Insert "+args.Op+" operation")
 	//等待结果
 	kv.mu.Lock()
 	notifyCh := kv.getNotifyChannel(index)
@@ -148,7 +154,7 @@ func (kv *ShardKV) GetAll(args *GetAllArgs, reply *GetAllReply) {
 	kv.mu.Unlock()
 
 	index, _, isLeader := kv.rf.Start(RaftCommand{
-		CmdType: ClientOpertion,
+		CmdType: ClientOperation,
 		Data: Op{
 			Key:    onekey,
 			OpType: OpGetAll,
@@ -158,6 +164,8 @@ func (kv *ShardKV) GetAll(args *GetAllArgs, reply *GetAllReply) {
 		reply.Err = ErrWrongLeader
 		return
 	}
+	// 是leader就记录发送日志
+	LOG(kv.gid, kv.me, DInfo, "Insert "+opTypeString(OpGetAll)+" operation")
 	//等待结果
 	kv.mu.Lock()
 	notifyCh := kv.getNotifyChannel(index)
@@ -194,7 +202,7 @@ func (kv *ShardKV) GetSize(args *GetAllArgs, reply *GetAllReply) {
 	kv.mu.Unlock()
 
 	index, _, isLeader := kv.rf.Start(RaftCommand{
-		CmdType: ClientOpertion,
+		CmdType: ClientOperation,
 		Data: Op{
 			Key:    onekey,
 			OpType: OpGetSize,
@@ -204,6 +212,9 @@ func (kv *ShardKV) GetSize(args *GetAllArgs, reply *GetAllReply) {
 		reply.Err = ErrWrongLeader
 		return
 	}
+
+	// 是leader就记录发送日志
+	LOG(kv.gid, kv.me, DInfo, "Insert "+opTypeString(OpGetSize)+" operation")
 	//等待结果
 	kv.mu.Lock()
 	notifyCh := kv.getNotifyChannel(index)
