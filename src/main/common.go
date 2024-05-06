@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"course/shardctrler"
+	"io"
+	"os"
 )
 
 type OpType uint8
@@ -142,3 +146,67 @@ func (data *LifeData) getOpType() OpType {
 //谨慎使用
 //cfg.StartServer(gi,i) gi是指启动的时候的group的index,[]int{0,1,2}里面的0/1/2都可以
 //cfg.ShutdownServer(gi, i)也是同理
+
+// tailLog 函数用于读取文件的最后几行
+func tailLog(filename string) ([]string, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	// 获取文件信息
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := fileInfo.Size()
+
+	// 如果文件大小为0，直接返回空的字符串切片
+	if size == 0 {
+		return nil, nil
+	}
+
+	// 定义一个足够大的缓冲区以读取文件的最后一部分
+	const bufferSize = 1024 * 10 // 可以调整这个值以适应你的需要
+	buffer := make([]byte, bufferSize)
+
+	// 定位到文件末尾前bufferSize字节的位置，如果文件大小小于bufferSize，则从头开始读取
+	startPos := size
+	if size <= int64(bufferSize) {
+		startPos = 0
+	} else {
+		startPos = size - int64(bufferSize)
+	}
+
+	_, err = file.Seek(startPos, io.SeekStart)
+	if err != nil {
+		return nil, err
+	}
+
+	// 读取最后一部分数据
+	readSize, err := io.ReadFull(file, buffer)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return nil, err
+	}
+
+	// 初始化结果切片
+	var result []string
+	scanner := bufio.NewScanner(bytes.NewReader(buffer[:readSize]))
+	for scanner.Scan() {
+		// 将读取到的行追加到结果切片中，并保持行的原始顺序
+		result = append(result, scanner.Text())
+	}
+
+	// 如果遇到扫描错误，返回错误
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// LogRequest 结构体用于绑定POST请求的JSON数据
+type LogRequest struct {
+	LastLineContent string `json:"lastLineContent" binding:"omitempty"`
+}

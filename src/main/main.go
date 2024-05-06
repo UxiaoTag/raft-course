@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -179,6 +180,48 @@ func main() {
 		ctx.JSON(http.StatusOK, statusMap)
 	}
 
+	//init getlogs
+	getLogsFunc := func(ctx *gin.Context) {
+		logFilePath := "alter_raft.log" // 你的日志文件路径
+
+		// 定义一个用于接收JSON数据的结构体变量
+		var request LogRequest
+
+		// 绑定JSON请求体到结构体中
+		if err := ctx.ShouldBindJSON(&request); err != nil {
+			ctx.Error(err).SetMeta("Error binding JSON request body")
+			ctx.AbortWithStatus(http.StatusBadRequest)
+			return
+		}
+
+		// 读取日志文件的最后部分
+		result, err := tailLog(logFilePath)
+		if err != nil {
+			ctx.Error(err).SetMeta("Error reading log file")
+			ctx.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+
+		// 如果lastLineContent为空，或者匹配不上，则返回全部日志
+		logList := result
+		if request.LastLineContent != "" {
+			// 查找lastLineContent在result中的索引
+			for i, line := range result {
+				if strings.TrimSpace(line) == strings.TrimSpace(request.LastLineContent) {
+					// 如果找到lastLineContent，则只返回该行之后的日志
+					logList = result[i+1:]
+					break
+				}
+			}
+		}
+
+		// 设置响应数据
+		ctx.JSON(http.StatusOK, gin.H{
+			"log_list":     logList,      // 新的日志行列表
+			"current_line": len(logList), // 当前读取到的行数
+		})
+	}
+
 	router := gin.Default()
 
 	// 启用 CORS
@@ -226,6 +269,7 @@ func main() {
 			"len":   lenShard,
 		})
 	})
+	router.POST("/GetLogs", getLogsFunc)
 	router.POST("/PutOrAppend", PutOrAppenfunc)
 	router.POST("/JoinOrLeave", JoinOrLeaveFunc)
 	//尽量不要使用该功能，关了请立刻开回去，不然坏机了

@@ -63,9 +63,9 @@ func init() {
 func LOG(gId int, peerId int, topic logTopic, format string, a ...interface{}) {
 	topicLevel := getTopicLevel(topic)
 	if logLevel <= topicLevel {
-		time := time.Since(logStart).Microseconds()
-		time /= 100
-		prefix := fmt.Sprintf("%06d G%04d %v S%d ", time, gId, string(topic), peerId)
+		now := time.Now()
+		timeStr := now.Format("15:04:05.000") // 时间格式，对应 HH:mm:ss.MS
+		prefix := fmt.Sprintf("%s G%04d %v S%d ", timeStr, gId, string(topic), peerId)
 		format = prefix + format
 		log.Printf(format, a...)
 	}

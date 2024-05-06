@@ -42,6 +42,7 @@ func (kv *ShardKV) applyTicker() {
 				if kv.maxraftstate != -1 && kv.rf.GetRaftStateSize() >= kv.maxraftstate {
 					//这里倒是出过一个的问题，panic: 57 is out of [57, 56]
 					// println("%d>=%d,sould be snapshot", kv.rf.GetRaftStateSize(), kv.maxraftstate)
+					LOG(kv.gid, kv.me, DDebug, "Shard KV Start SnapShot Group:%d Peer:%d ,LogNum:%d", kv.gid, kv.me, kv.rf.GetRaftStateSize())
 					kv.makeSnapShot(message.CommandIndex)
 					// //做完SnapShot顺便Merge
 					// for shardid := range kv.shards {
@@ -56,6 +57,7 @@ func (kv *ShardKV) applyTicker() {
 				kv.mu.Lock()
 				kv.restoreSnapShot(message.Snapshot)
 				kv.lastApplied = message.SnapshotIndex
+				LOG(kv.gid, kv.me, DDebug, "Shard KV Restore SnapShot Group:%d Peer:%d ,LogNum:%d", kv.gid, kv.me, kv.rf.GetRaftStateSize())
 				kv.mu.Unlock()
 			}
 		}
@@ -87,6 +89,8 @@ func (kv *ShardKV) fetchConfigTicker() {
 						CmdType: ConfigChange,
 						Data:    NewConfig,
 					}, &OpReply{})
+					//当新建配置，这里先发一个Insert
+					LOG(kv.gid, kv.me, DInfo, "Insert "+raftOpTypeString(ConfigChange)+" operation")
 				}
 			}
 			time.Sleep(FetchConfigIntval)
@@ -115,6 +119,8 @@ func (kv *ShardKV) shardMigrationTicker() {
 						if ok && getShardReply.Err == OK {
 							//用log传递给所有人
 							kv.ConfigCommand(RaftCommand{ShardMigration, getShardReply}, &OpReply{})
+							//当拿到数据，插入日志时，这里发一个Insert标识数据迁入
+							LOG(kv.gid, kv.me, DInfo, "Insert "+raftOpTypeString(ShardMigration)+" operation")
 						}
 					}
 				}(kv.prevConfig.Groups[gid], kv.currentConfig.Num, shardIds)
@@ -144,6 +150,8 @@ func (kv *ShardKV) shardGCTicker() {
 						if ok && shardGCReply.Err == OK {
 							//这里发送的意思是当你发送给对方并收到GC.OK，则自己修改GC状态
 							kv.ConfigCommand(RaftCommand{ShardGC, shardArgs}, &OpReply{})
+							//当发送给别人删除分片数据成功之后，自己清空GC状态为Nomal
+							LOG(kv.gid, kv.me, DInfo, "Insert "+raftOpTypeString(ShardGC)+" operation GC->Normal")
 						}
 					}
 				}(kv.prevConfig.Groups[gid], kv.currentConfig.Num, shardIds)
@@ -189,6 +197,8 @@ func (kv *ShardKV) GetShardData(args *ShardOperationArgs, reply *ShardOperationR
 	//拷贝数据
 	reply.ShardData = make(map[int]map[string]string)
 	for _, shardid := range args.ShardIds {
+		//先Sync一下防止拷贝出错
+		kv.shards[shardid].KV.Sync()
 		reply.ShardData[shardid] = kv.shards[shardid].copyData()
 	}
 
@@ -219,7 +229,8 @@ func (kv *ShardKV) DeleteShardData(args *ShardOperationArgs, reply *ShardOperati
 	var opReply OpReply
 	//下达GC，在applyShardGC中实现
 	kv.ConfigCommand(RaftCommand{ShardGC, *args}, &opReply)
-
+	//当发送给别人删除分片数据成功之后，这里主要就是MoveOut将其清空
+	LOG(kv.gid, kv.me, DInfo, "Insert "+raftOpTypeString(ShardGC)+" operation MoveOut->Normal")
 	reply.Err = opReply.Err
 }
 

@@ -280,6 +280,12 @@ func (db *MiniBitcask) Close() error {
 	if db.dbFile == nil {
 		return ErrInvalidDBFile
 	}
-
+	//分片迁移大概率做多几次这里可能会占用比较多的内存索引还是清理一下比较好
+	db.indexes = nil
 	return db.dbFile.File.Close()
+}
+
+// Sync 方法保存文件
+func (db *MiniBitcask) Sync() error {
+	return db.dbFile.File.Sync()
 }

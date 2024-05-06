@@ -65,3 +65,13 @@ func (mkv *MemoryKVStateMachine) GetSize() int {
 	// return len(mkv.KV.GetKey())
 	return mkv.KV.GetSize()
 }
+
+func (mkv *MemoryKVStateMachine) Sync() {
+	if err := mkv.KV.Sync(); err != nil {
+		panic("KV Sync Error" + err.Error())
+	}
+}
+
+func (mkv *MemoryKVStateMachine) Kill() {
+	mkv.KV.Close()
+}

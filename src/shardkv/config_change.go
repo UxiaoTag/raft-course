@@ -76,6 +76,7 @@ func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
 		}
 		kv.prevConfig = kv.currentConfig
 		kv.currentConfig = newConfig
+		LOG(kv.gid, kv.me, DDebug, "DB apply New Config %d", newConfig.Num)
 		return &OpReply{Err: OK}
 	}
 	return &OpReply{Err: ErrWrongConfig}
@@ -92,7 +93,10 @@ func (kv *ShardKV) applyShardMingration(reply *ShardOperationReply) *OpReply {
 					// shard.KV[k] = v
 					shard.KV.Put([]byte(k), []byte(v))
 				}
+				//执行完毕之后Sync一下
+				shard.KV.Sync()
 				shard.Status = GC
+				LOG(kv.gid, kv.me, DDebug, "DB MoveIn -> GC ,Shrad:%d", shardId)
 			} else {
 				break
 			}
@@ -116,11 +120,14 @@ func (kv *ShardKV) applyShardGC(shardInfo *ShardOperationArgs) *OpReply {
 			shard := kv.shards[shardId]
 			if shard.Status == GC {
 				shard.Status = Normal
+				LOG(kv.gid, kv.me, DDebug, "DB GC -> Normal  ,Shrad:%d", shardId)
 			} else if shard.Status == MoveOut {
-				//clear shard
+				//clear shard，这里会Close掉文件。
 				kv.shards[shardId].KV.ClearAll()
 				//clear完毕之后从新使用NewMemoryKVStateMachine，会通过open重新创建一个数据库实例，因为文件也删了，会重建数据库
 				kv.shards[shardId] = NewMemoryKVStateMachine(shardId, kv.me, kv.gid)
+				shard.Status = Normal
+				LOG(kv.gid, kv.me, DDebug, "DB MoveOut -> Normal  ,Shrad:%d", shardId)
 			} else {
 				break
 			}

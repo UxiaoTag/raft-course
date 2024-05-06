@@ -57,7 +57,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 	// 是leader就记录发送日志
-	LOG(kv.gid, kv.me, DInfo, "Insert "+opTypeString(OpGet)+" operation")
+	LOG(kv.gid, kv.me, DInfo, "Insert "+opTypeString(OpGet)+" operation LOG:%d", index)
 
 	//等待结果
 	kv.mu.Lock()
@@ -121,7 +121,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 
 	// 是leader就记录发送日志
-	LOG(kv.gid, kv.me, DInfo, "Insert "+args.Op+" operation")
+	LOG(kv.gid, kv.me, DInfo, "Insert "+args.Op+" operation LOG:%d", index)
 	//等待结果
 	kv.mu.Lock()
 	notifyCh := kv.getNotifyChannel(index)
@@ -165,7 +165,7 @@ func (kv *ShardKV) GetAll(args *GetAllArgs, reply *GetAllReply) {
 		return
 	}
 	// 是leader就记录发送日志
-	LOG(kv.gid, kv.me, DInfo, "Insert "+opTypeString(OpGetAll)+" operation")
+	LOG(kv.gid, kv.me, DInfo, "Insert "+opTypeString(OpGetAll)+" operation LOG:%d", index)
 	//等待结果
 	kv.mu.Lock()
 	notifyCh := kv.getNotifyChannel(index)
@@ -214,7 +214,7 @@ func (kv *ShardKV) GetSize(args *GetAllArgs, reply *GetAllReply) {
 	}
 
 	// 是leader就记录发送日志
-	LOG(kv.gid, kv.me, DInfo, "Insert "+opTypeString(OpGetSize)+" operation")
+	LOG(kv.gid, kv.me, DInfo, "Insert "+opTypeString(OpGetSize)+" operation LOG:%d", index)
 	//等待结果
 	kv.mu.Lock()
 	notifyCh := kv.getNotifyChannel(index)
@@ -248,6 +248,9 @@ func (kv *ShardKV) GetSize(args *GetAllArgs, reply *GetAllReply) {
 func (kv *ShardKV) Kill() {
 	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
+	for _, shard := range kv.shards {
+		shard.Kill()
+	}
 	// Your code here, if desired.
 }
 
@@ -323,6 +326,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	go kv.fetchConfigTicker()
 	go kv.shardMigrationTicker()
 	go kv.shardGCTicker()
+
+	LOG(kv.gid, kv.me, DInfo, "Shard KV Start Group:%d Peer:%d", kv.gid, kv.me)
 
 	return kv
 }
