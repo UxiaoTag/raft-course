@@ -148,7 +148,7 @@ func (kv *ShardKV) shardGCTicker() {
 						clientEnd := kv.make_end(server)
 						ok := clientEnd.Call("ShardKV.DeleteShardData", &shardArgs, &shardGCReply)
 						if ok && shardGCReply.Err == OK {
-							//这里发送的意思是当你发送给对方并收到GC.OK，则自己修改GC状态
+							//这里发送的意思是当你发送给对方MOVEOUT的可以GC了，并收到OK，则自己修改GC状态
 							kv.ConfigCommand(RaftCommand{ShardGC, shardArgs}, &OpReply{})
 							//当发送给别人删除分片数据成功之后，自己清空GC状态为Nomal
 							LOG(kv.gid, kv.me, DInfo, "Insert "+raftOpTypeString(ShardGC)+" operation GC->Normal")
