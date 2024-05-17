@@ -198,7 +198,7 @@ func (kv *ShardKV) GetShardData(args *ShardOperationArgs, reply *ShardOperationR
 	reply.ShardData = make(map[int]map[string]string)
 	for _, shardid := range args.ShardIds {
 		//先Sync一下防止拷贝出错
-		kv.shards[shardid].KV.Sync()
+		// kv.shards[shardid].KV.Sync()
 		reply.ShardData[shardid] = kv.shards[shardid].copyData()
 	}
 

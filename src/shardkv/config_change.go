@@ -60,16 +60,24 @@ func (kv *ShardKV) applyNewConfig(newConfig shardctrler.Config) *OpReply {
 			if kv.currentConfig.Shards[i] != kv.gid && newConfig.Shards[i] == kv.gid {
 				// 需要迁移进来
 				gid := kv.currentConfig.Shards[i]
+				if kv.shards[i] == nil {
+					kv.shards[i] = NewMemoryKVStateMachine(i, kv.me, kv.gid)
+				}
 				if gid != 0 {
 					kv.shards[i].Status = MoveIn
+					LOG(kv.gid, kv.me, DDebug, "DB Normal -> MoveIn  ,Shrad:%d", i)
 				}
 			}
 			//处理分段离开
 			if kv.currentConfig.Shards[i] == kv.gid && newConfig.Shards[i] != kv.gid {
 				//需要迁移出去
 				gid := kv.currentConfig.Shards[i]
+				if kv.shards[i] == nil {
+					kv.shards[i] = NewMemoryKVStateMachine(i, kv.me, kv.gid)
+				}
 				if gid != 0 {
 					kv.shards[i].Status = MoveOut
+					LOG(kv.gid, kv.me, DDebug, "DB Normal -> MoveOut  ,Shrad:%d", i)
 				}
 			}
 
@@ -90,11 +98,11 @@ func (kv *ShardKV) applyShardMingration(reply *ShardOperationReply) *OpReply {
 			if shard.Status == MoveIn {
 				// kv.shards[shardId].KV = shardData
 				for k, v := range shardData {
-					// shard.KV[k] = v
-					shard.KV.Put([]byte(k), []byte(v))
+					shard.KV[k] = v
+					// shard.KV.Put([]byte(k), []byte(v))
 				}
 				//执行完毕之后Sync一下
-				shard.KV.Sync()
+				// shard.KV.Sync()
 				shard.Status = GC
 				LOG(kv.gid, kv.me, DDebug, "DB MoveIn -> GC ,Shrad:%d", shardId)
 			} else {
@@ -118,12 +126,17 @@ func (kv *ShardKV) applyShardGC(shardInfo *ShardOperationArgs) *OpReply {
 	if shardInfo.ConfigNum == kv.currentConfig.Num {
 		for _, shardId := range shardInfo.ShardIds {
 			shard := kv.shards[shardId]
+			//补救，出现过空指针，这里先做判断
+			if shard == nil {
+				kv.shards[shardId] = NewMemoryKVStateMachine(shardId, kv.me, kv.gid)
+				shard = kv.shards[shardId]
+			}
 			if shard.Status == GC {
 				shard.Status = Normal
 				LOG(kv.gid, kv.me, DDebug, "DB GC -> Normal  ,Shrad:%d", shardId)
 			} else if shard.Status == MoveOut {
 				//clear shard，这里会Close掉文件。
-				kv.shards[shardId].KV.ClearAll()
+				// kv.shards[shardId].KV.ClearAll()
 				//clear完毕之后从新使用NewMemoryKVStateMachine，会通过open重新创建一个数据库实例，因为文件也删了，会重建数据库
 				kv.shards[shardId] = NewMemoryKVStateMachine(shardId, kv.me, kv.gid)
 				shard.Status = Normal

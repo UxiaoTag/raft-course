@@ -6,3 +6,4 @@ api.key
 
 src/shardkv/tmp/
 src/main/tmp/
+src/main/alter_raft.log

@@ -4,6 +4,8 @@ import (
 	"course/shardkv"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -14,7 +16,7 @@ import (
 func main() {
 
 	//init servers
-	cfg := Makeconfig(5, true, 100)
+	cfg := Makeconfig(4, true, 100)
 	defer cfg.Cleanup()
 
 	//join shardKVServer
@@ -268,6 +270,22 @@ func main() {
 			"shard": shardstr,
 			"len":   lenShard,
 		})
+	})
+	router.GET("/Bug", func(ctx *gin.Context) {
+		cfg.Cleanup()
+
+		//获取工作目录
+		currentDir, err := os.Getwd()
+		if err != nil {
+			panic("read Dir Error:" + err.Error() + "\n")
+		}
+		// 定义tmp目录的路径
+		tmpDir := filepath.Join(currentDir, "tmp")
+		//清空
+		err = os.RemoveAll(tmpDir)
+		if err != nil {
+			panic("Error removing tmp directory:" + err.Error() + "\n")
+		}
 	})
 	router.POST("/GetLogs", getLogsFunc)
 	router.POST("/PutOrAppend", PutOrAppenfunc)

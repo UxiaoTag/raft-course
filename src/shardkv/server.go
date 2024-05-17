@@ -192,6 +192,7 @@ func (kv *ShardKV) GetSize(args *GetAllArgs, reply *GetAllReply) {
 	// Your code here.
 	//判断是否是负责的分片，否则直接返回
 	kv.mu.Lock()
+	reply.Size = 0
 	//这是个笨方法,其实可以直接,毕设时间紧急，可优化TODO：if kv.config.shard[args.Shard]!=kv.gid
 	onekey := shardtoKey(args.Shard)
 	if !kv.matchGroup(onekey) {
@@ -199,46 +200,50 @@ func (kv *ShardKV) GetSize(args *GetAllArgs, reply *GetAllReply) {
 		kv.mu.Unlock()
 		return
 	}
-	kv.mu.Unlock()
-
-	index, _, isLeader := kv.rf.Start(RaftCommand{
-		CmdType: ClientOperation,
-		Data: Op{
-			Key:    onekey,
-			OpType: OpGetSize,
-		},
-	})
-	if !isLeader {
-		reply.Err = ErrWrongLeader
-		return
+	if kv.shards[args.Shard] != nil {
+		reply.Err = OK
+		reply.Size = kv.shards[args.Shard].GetSize()
 	}
-
-	// 是leader就记录发送日志
-	LOG(kv.gid, kv.me, DInfo, "Insert "+opTypeString(OpGetSize)+" operation LOG:%d", index)
-	//等待结果
-	kv.mu.Lock()
-	notifyCh := kv.getNotifyChannel(index)
 	kv.mu.Unlock()
+	//优化旧方法
+	// index, _, isLeader := kv.rf.Start(RaftCommand{
+	// 	CmdType: ClientOperation,
+	// 	Data: Op{
+	// 		Key:    onekey,
+	// 		OpType: OpGetSize,
+	// 	},
+	// })
+	// if !isLeader {
+	// 	reply.Err = ErrWrongLeader
+	// 	return
+	// }
 
-	select {
-	case result := <-notifyCh:
-		//特殊处理
-		Size, err := strconv.Atoi(result.Value)
-		if err != nil {
-			panic("Error string->int errro")
-		}
-		reply.Size = Size
-		reply.Err = result.Err
-		//该处time.After()返回一个通道，这个通道将在指定的时间后发送一个值（通常是nil），然后关闭。当通道关闭时，select语句中的相应case分支会被执行。所以这句话就是一个计时器
-		// case <-time.After(ClientRequsetTimeout):
-		// 	reply.Err = ErrTimeout
-	}
-	//异步删除通知的通道，因为是index产生的，所以通道唯一，用完要删
-	go func() {
-		kv.mu.Lock()
-		kv.removeNotifyChannel(index)
-		kv.mu.Unlock()
-	}()
+	// // 是leader就记录发送日志
+	// LOG(kv.gid, kv.me, DInfo, "Insert "+opTypeString(OpGetSize)+" operation LOG:%d", index)
+	// //等待结果
+	// kv.mu.Lock()
+	// notifyCh := kv.getNotifyChannel(index)
+	// kv.mu.Unlock()
+
+	// select {
+	// case result := <-notifyCh:
+	// 	//特殊处理
+	// 	Size, err := strconv.Atoi(result.Value)
+	// 	if err != nil {
+	// 		panic("Error string->int errro")
+	// 	}
+	// 	reply.Size = Size
+	// 	reply.Err = result.Err
+	// 	//该处time.After()返回一个通道，这个通道将在指定的时间后发送一个值（通常是nil），然后关闭。当通道关闭时，select语句中的相应case分支会被执行。所以这句话就是一个计时器
+	// 	// case <-time.After(ClientRequsetTimeout):
+	// 	// 	reply.Err = ErrTimeout
+	// }
+	// //异步删除通知的通道，因为是index产生的，所以通道唯一，用完要删
+	// go func() {
+	// 	kv.mu.Lock()
+	// 	kv.removeNotifyChannel(index)
+	// 	kv.mu.Unlock()
+	// }()
 }
 
 // the tester calls Kill() when a ShardKV instance won't
